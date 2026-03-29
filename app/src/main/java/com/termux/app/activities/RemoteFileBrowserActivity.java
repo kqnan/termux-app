@@ -27,6 +27,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.termux.R;
+import com.termux.app.ssh.CodeMirrorMode;
 import com.termux.app.ssh.RemoteFile;
 import com.termux.app.ssh.RemoteFileListAdapter;
 import com.termux.app.ssh.RemoteFileLister;
@@ -907,9 +908,18 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
             mPathStack.push(mCurrentPath);
             loadDirectory(newPath);
         } else {
-            // For files, show info toast (future: implement download/open)
-            String info = file.getName() + " (" + file.getSizeFormatted() + ")";
-            Toast.makeText(this, info, Toast.LENGTH_SHORT).show();
+            // Check if file is editable code file
+            if (CodeMirrorMode.isEditableFile(file.getName())) {
+                // Launch code editor
+                Intent intent = new Intent(this, RemoteCodeEditorActivity.class);
+                intent.putExtra(RemoteCodeEditorActivity.EXTRA_CONNECTION_INFO, mConnectionInfo);
+                intent.putExtra(RemoteCodeEditorActivity.EXTRA_FILE_PATH, file.getPath());
+                startActivity(intent);
+            } else {
+                // Non-code file: show info toast
+                String info = file.getName() + " (" + file.getSizeFormatted() + ")";
+                Toast.makeText(this, info, Toast.LENGTH_SHORT).show();
+            }
         }
     }
 

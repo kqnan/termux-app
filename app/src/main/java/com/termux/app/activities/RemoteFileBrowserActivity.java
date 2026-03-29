@@ -88,6 +88,9 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
     /** Refresh button */
     private View mRefreshButton;
 
+    /** New folder button */
+    private View mNewFolderButton;
+
     /** Loading indicator */
     private ProgressBar mLoadingIndicator;
 
@@ -174,6 +177,7 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         mBreadcrumbPathLayout = findViewById(R.id.breadcrumb_path_layout);
         mBackButton = findViewById(R.id.back_button);
         mRefreshButton = findViewById(R.id.refresh_button);
+        mNewFolderButton = findViewById(R.id.new_folder_button);
 
         // Create loading indicator programmatically
         mLoadingIndicator = findViewById(R.id.loading_indicator);
@@ -253,6 +257,9 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
 
         // Refresh button - reload current directory
         mRefreshButton.setOnClickListener(v -> loadDirectory(mCurrentPath));
+
+        // New folder button - show new folder dialog
+        mNewFolderButton.setOnClickListener(v -> showNewFolderDialog());
 
         // File item click - enter directory or show file info
         mFileListView.setOnItemClickListener((parent, view, position, id) -> {
@@ -363,6 +370,7 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         mFileListView.setEnabled(!isLoading);
         mBackButton.setEnabled(!isLoading && !mPathStack.isEmpty());
         mRefreshButton.setEnabled(!isLoading);
+        mNewFolderButton.setEnabled(!isLoading);
     }
 
     /**

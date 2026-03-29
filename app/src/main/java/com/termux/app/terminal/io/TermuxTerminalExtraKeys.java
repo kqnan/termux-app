@@ -1,6 +1,7 @@
 package com.termux.app.terminal.io;
 
 import android.annotation.SuppressLint;
+import android.content.Intent;
 import android.view.Gravity;
 import android.view.View;
 
@@ -8,6 +9,7 @@ import androidx.annotation.NonNull;
 import androidx.drawerlayout.widget.DrawerLayout;
 
 import com.termux.app.TermuxActivity;
+import com.termux.app.activities.RemoteFileBrowserActivity;
 import com.termux.app.ssh.SSHConnectionInfo;
 import com.termux.app.ssh.SSHControlMasterInstaller;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
@@ -105,17 +107,22 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
             if (terminalView != null && terminalView.mEmulator != null)
                 terminalView.mEmulator.toggleAutoScrollDisabled();
         } else if ("F".equals(key)) {
-            // F button: Check for active SSH connections and show result
+            // F button: Launch RemoteFileBrowserActivity if SSH connection active
             Logger.logDebug(LOG_TAG, "F button clicked");
             List<SSHConnectionInfo> connections = SSHControlMasterInstaller.getActiveConnections();
             Logger.logDebug(LOG_TAG, "Active SSH connections: " + connections.size());
-            
+
             if (connections.isEmpty()) {
                 Logger.showToast(mActivity, "无活跃 SSH 连接", false);
             } else {
-                // Show first connection info
+                // Launch RemoteFileBrowserActivity with first active connection
                 SSHConnectionInfo conn = connections.get(0);
-                Logger.showToast(mActivity, "SSH: " + conn.toString(), false);
+                Logger.logDebug(LOG_TAG, "Launching RemoteFileBrowserActivity for: " + conn.toString());
+
+                Intent intent = new Intent(mActivity, RemoteFileBrowserActivity.class);
+                intent.putExtra(RemoteFileBrowserActivity.EXTRA_CONNECTION_INFO, conn);
+                intent.putExtra(RemoteFileBrowserActivity.EXTRA_INITIAL_PATH, "/");
+                mActivity.startActivity(intent);
             }
         } else {
             super.onTerminalExtraKeyButtonClick(view, key, ctrlDown, altDown, shiftDown, fnDown);

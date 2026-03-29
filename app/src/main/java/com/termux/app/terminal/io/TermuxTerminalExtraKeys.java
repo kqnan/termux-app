@@ -8,6 +8,8 @@ import androidx.annotation.NonNull;
 import androidx.drawerlayout.widget.DrawerLayout;
 
 import com.termux.app.TermuxActivity;
+import com.termux.app.ssh.SSHConnectionInfo;
+import com.termux.app.ssh.SSHControlMasterInstaller;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalViewClient;
 import com.termux.shared.logger.Logger;
@@ -17,6 +19,8 @@ import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
 import com.termux.shared.termux.settings.properties.TermuxSharedProperties;
 import com.termux.shared.termux.terminal.io.TerminalExtraKeys;
 import com.termux.view.TerminalView;
+
+import java.util.List;
 
 import org.json.JSONException;
 
@@ -100,6 +104,19 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
             TerminalView terminalView = mTermuxTerminalViewClient.getActivity().getTerminalView();
             if (terminalView != null && terminalView.mEmulator != null)
                 terminalView.mEmulator.toggleAutoScrollDisabled();
+        } else if ("F".equals(key)) {
+            // F button: Check for active SSH connections and show result
+            Logger.logDebug(LOG_TAG, "F button clicked");
+            List<SSHConnectionInfo> connections = SSHControlMasterInstaller.getActiveConnections();
+            Logger.logDebug(LOG_TAG, "Active SSH connections: " + connections.size());
+            
+            if (connections.isEmpty()) {
+                Logger.showToast(mActivity, "无活跃 SSH 连接", false);
+            } else {
+                // Show first connection info
+                SSHConnectionInfo conn = connections.get(0);
+                Logger.showToast(mActivity, "SSH: " + conn.toString(), false);
+            }
         } else {
             super.onTerminalExtraKeyButtonClick(view, key, ctrlDown, altDown, shiftDown, fnDown);
         }

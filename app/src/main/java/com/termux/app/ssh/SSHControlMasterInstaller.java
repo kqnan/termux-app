@@ -334,4 +334,99 @@ public class SSHControlMasterInstaller {
 
         return install(context);
     }
+
+    /**
+     * Get list of active SSH connections by scanning control socket directory.
+     *
+     * Scans ~/.ssh/control/ directory for Unix socket files, parses filenames
+     * using pattern user@host:port, and returns list of SSHConnectionInfo objects.
+     *
+     * @return List of SSHConnectionInfo for active connections, empty list if none
+     */
+    public static java.util.List<SSHConnectionInfo> getActiveConnections() {
+        java.util.List<SSHConnectionInfo> connections = new java.util.ArrayList<>();
+
+        if (!CONTROL_DIR.exists()) {
+            Logger.logDebug(LOG_TAG, "Control directory does not exist: " + CONTROL_DIR.getAbsolutePath());
+            return connections;
+        }
+
+        File[] files = CONTROL_DIR.listFiles();
+        if (files == null || files.length == 0) {
+            Logger.logDebug(LOG_TAG, "No files found in control directory");
+            return connections;
+        }
+
+        Logger.logDebug(LOG_TAG, "Scanning control directory, found " + files.length + " files");
+
+        int parsedCount = 0;
+        int skippedCount = 0;
+
+        for (File file : files) {
+            String filename = file.getName();
+            String path = file.getAbsolutePath();
+
+            // Check if file is a Unix socket (character device with specific mode on Android/Linux)
+            // Unix sockets have file type indicator 's' in stat output
+            // On Android, we can check using Os.stat() to get file mode
+            boolean isSocket = isUnixSocket(file);
+
+            if (!isSocket) {
+                Logger.logDebug(LOG_TAG, "Skipping non-socket file: " + filename);
+                skippedCount++;
+                continue;
+            }
+
+            // Parse filename: user@host:port
+            SSHConnectionInfo info = SSHConnectionInfo.parseFromFilename(filename, path);
+
+            if (info == null) {
+                Logger.logDebug(LOG_TAG, "Failed to parse socket filename: " + filename);
+                skippedCount++;
+                continue;
+            }
+
+            connections.add(info);
+            parsedCount++;
+            Logger.logDebug(LOG_TAG, "Parsed active connection: " + info.toString() + " from " + filename);
+        }
+
+        Logger.logDebug(LOG_TAG, "Scan complete: " + parsedCount + " connections found, " + skippedCount + " files skipped, returning " + connections.size() + " items");
+
+        return connections;
+    }
+
+    /**
+     * Check if a file is a Unix socket.
+     *
+     * Uses Os.stat() to check file mode for Unix socket type.
+     * Unix sockets have S_IFSOCK (0xC000) in their mode bits.
+     *
+     * @param file File to check
+     * @return true if file is a Unix socket, false otherwise
+     */
+    private static boolean isUnixSocket(File file) {
+        if (!file.exists()) {
+            return false;
+        }
+
+        try {
+            // Os.stat() returns struct stat with st_mode field
+            // S_IFSOCK = 0xC000 (49152 in decimal) - socket file type mask
+            // Use OsConstants.S_IFSOCK when available
+            android.system.StructStat stat = Os.stat(file.getAbsolutePath());
+            int mode = stat.st_mode;
+
+            // Check if file type is socket: (mode & S_IFMT) == S_IFSOCK
+            // S_IFMT = 0xF000 (61440) - file type mask
+            // S_IFSOCK = 0xC000 (49152) - socket type
+            int fileType = mode & 0170000; // S_IFMT in octal
+            int socketType = 0140000;     // S_IFSOCK in octal
+
+            return fileType == socketType;
+        } catch (Exception e) {
+            Logger.logDebug(LOG_TAG, "Failed to stat file " + file.getName() + ": " + e.getMessage());
+            return false;
+        }
+    }
 }

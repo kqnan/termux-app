@@ -119,8 +119,13 @@ public class SSHControlMasterInstaller {
         }
 
         try {
-            String content = FileUtils.readTextFile(marker.getAbsolutePath(), "UTF-8").trim();
-            int version = Integer.parseInt(content);
+            StringBuilder sb = new StringBuilder();
+            Error error = FileUtils.readTextFromFile("SSH marker", marker.getAbsolutePath(),
+                java.nio.charset.StandardCharsets.UTF_8, sb, false);
+            if (error != null) {
+                return false;
+            }
+            int version = Integer.parseInt(sb.toString().trim());
             return version >= INSTALL_VERSION;
         } catch (Exception e) {
             return false;
@@ -136,7 +141,11 @@ public class SSHControlMasterInstaller {
             if (markerDir != null && !markerDir.exists()) {
                 FileUtils.createDirectoryFile(markerDir.getAbsolutePath());
             }
-            FileUtils.writeTextFile(INSTALL_MARKER_PATH, String.valueOf(INSTALL_VERSION), "UTF-8");
+            Error error = FileUtils.writeTextToFile("SSH marker", INSTALL_MARKER_PATH,
+                java.nio.charset.StandardCharsets.UTF_8, String.valueOf(INSTALL_VERSION), false);
+            if (error != null) {
+                Logger.logErrorExtended(LOG_TAG, "Failed to write installation marker: " + error);
+            }
         } catch (Exception e) {
             Logger.logErrorExtended(LOG_TAG, "Failed to write installation marker: " + e.getMessage());
         }
@@ -196,7 +205,7 @@ public class SSHControlMasterInstaller {
             }
 
             // Rename ssh to ssh-real
-            Error error = FileUtils.renameFile(SSH_BINARY_PATH, SSH_REAL_BINARY_PATH, false);
+            Error error = FileUtils.moveFile("ssh binary", SSH_BINARY_PATH, SSH_REAL_BINARY_PATH, false);
             if (error != null) {
                 Logger.logErrorExtended(LOG_TAG, "Failed to rename ssh to ssh-real: " + error);
                 return false;
@@ -252,7 +261,7 @@ public class SSHControlMasterInstaller {
 
             // Remove existing symlink if it points elsewhere
             if (symlink.exists()) {
-                Error error = FileUtils.deleteFile(symlink.getAbsolutePath(), false);
+                Error error = FileUtils.deleteFile("ssh symlink", symlink.getAbsolutePath(), false);
                 if (error != null) {
                     Logger.logErrorExtended(LOG_TAG, "Failed to remove existing ssh: " + error);
                     return false;
@@ -314,13 +323,13 @@ public class SSHControlMasterInstaller {
         // Remove installation marker to trigger reinstall
         File marker = new File(INSTALL_MARKER_PATH);
         if (marker.exists()) {
-            FileUtils.deleteFile(marker.getAbsolutePath(), false);
+            FileUtils.deleteFile("SSH marker", marker.getAbsolutePath(), false);
         }
 
         // Remove existing symlink
         File sshLink = new File(SSH_WRAPPER_SYMLINK_PATH);
         if (sshLink.exists()) {
-            FileUtils.deleteFile(sshLink.getAbsolutePath(), false);
+            FileUtils.deleteFile("ssh symlink", sshLink.getAbsolutePath(), false);
         }
 
         return install(context);

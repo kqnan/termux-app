@@ -282,4 +282,18 @@
     <string name="error_transfer_connection">Connection not available</string>
     <string name="error_transfer_timeout">Connection timeout</string>
 
+    <!-- Code Editor -->
+    <string name="title_code_editor">Code Editor</string>
+    <string name="action_save">Save</string>
+    <string name="action_search">Search</string>
+    <string name="action_replace">Replace</string>
+    <string name="title_unsaved_changes">Unsaved Changes</string>
+    <string name="message_unsaved_changes">Discard unsaved changes?</string>
+    <string name="action_discard">Discard</string>
+    <string name="success_file_saved">File saved</string>
+    <string name="error_file_load_failed">Failed to load file</string>
+    <string name="error_file_save_failed">Failed to save file</string>
+    <string name="hint_search">Search</string>
+    <string name="hint_replace">Replace with</string>
+
 </resources>

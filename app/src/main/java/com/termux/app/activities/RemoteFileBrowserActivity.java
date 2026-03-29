@@ -28,6 +28,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.termux.R;
 import com.termux.app.ssh.CodeMirrorMode;
+import com.termux.app.ssh.ImageFileType;
 import com.termux.app.ssh.RemoteFile;
 import com.termux.app.ssh.RemoteFileListAdapter;
 import com.termux.app.ssh.RemoteFileLister;
@@ -915,8 +916,14 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
                 intent.putExtra(RemoteCodeEditorActivity.EXTRA_CONNECTION_INFO, mConnectionInfo);
                 intent.putExtra(RemoteCodeEditorActivity.EXTRA_FILE_PATH, file.getPath());
                 startActivity(intent);
+            } else if (ImageFileType.isImageFile(file.getName())) {
+                // Launch image preview
+                Intent intent = new Intent(this, RemoteImagePreviewActivity.class);
+                intent.putExtra(RemoteImagePreviewActivity.EXTRA_CONNECTION_INFO, mConnectionInfo);
+                intent.putExtra(RemoteImagePreviewActivity.EXTRA_FILE_PATH, file.getPath());
+                startActivity(intent);
             } else {
-                // Non-code file: show info toast
+                // Non-code/non-image file: show info toast
                 String info = file.getName() + " (" + file.getSizeFormatted() + ")";
                 Toast.makeText(this, info, Toast.LENGTH_SHORT).show();
             }

@@ -296,4 +296,9 @@
     <string name="hint_search">Search</string>
     <string name="hint_replace">Replace with</string>
 
+    <!-- Image Preview -->
+    <string name="title_image_preview">Image Preview</string>
+    <string name="error_image_load_failed">Failed to load image</string>
+    <string name="error_image_not_supported">File is not a supported image format</string>
+
 </resources>

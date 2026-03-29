@@ -122,6 +122,15 @@
             tools:targetApi="n" />
 
         <activity
+            android:name=".app.activities.RemoteImagePreviewActivity"
+            android:exported="false"
+            android:label="@string/title_image_preview"
+            android:parentActivityName=".app.activities.RemoteFileBrowserActivity"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar"
+            tools:targetApi="n" />
+
+        <activity
             android:name=".shared.activities.ReportActivity"
             android:theme="@style/Theme.MarkdownViewActivity.DayNight"
             android:documentLaunchMode="intoExisting" />

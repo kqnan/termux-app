@@ -1,10 +1,17 @@
 package com.termux.app.activities;
 
+import android.app.AlertDialog;
+import android.content.ContentResolver;
 import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.DocumentsContract;
+import android.provider.OpenableColumns;
 import android.view.ContextMenu;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -24,6 +31,7 @@ import com.termux.app.ssh.RemoteFile;
 import com.termux.app.ssh.RemoteFileListAdapter;
 import com.termux.app.ssh.RemoteFileLister;
 import com.termux.app.ssh.RemoteFileOperator;
+import com.termux.app.ssh.RemoteFileTransfer;
 import com.termux.app.ssh.SSHConnectionInfo;
 import com.termux.shared.interact.MessageDialogUtils;
 import com.termux.shared.logger.Logger;
@@ -31,6 +39,8 @@ import com.termux.shared.theme.NightMode;
 import com.termux.shared.activity.media.AppCompatActivityUtils;
 import com.termux.shared.termux.interact.TextInputDialogUtils;
 
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,6 +54,8 @@ import java.util.Stack;
  * - Click to enter subdirectories
  * - Back button to navigate to parent directories
  * - Refresh button to reload current directory
+ * - Upload button to send local files to remote server
+ * - Download context menu to retrieve remote files
  *
  * Requires SSHConnectionInfo passed via Intent extras to establish
  * connection through existing ControlMaster socket.
@@ -60,6 +72,18 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
 
     /** Default initial path if not specified */
     private static final String DEFAULT_INITIAL_PATH = "/";
+
+    /** Request code for SAF upload file picker */
+    private static final int REQUEST_CODE_UPLOAD = 1001;
+
+    /** Request code for SAF download file saver */
+    private static final int REQUEST_CODE_DOWNLOAD = 1002;
+
+    /** Minimum progress update interval in milliseconds (throttle UI updates) */
+    private static final long PROGRESS_UPDATE_INTERVAL_MS = 100;
+
+    /** Minimum bytes change for progress update (throttle UI updates) */
+    private static final long PROGRESS_UPDATE_MIN_BYTES = 1024;
 
     /** Current SSH connection info */
     private SSHConnectionInfo mConnectionInfo;
@@ -91,6 +115,9 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
     /** New folder button */
     private View mNewFolderButton;
 
+    /** Upload button */
+    private View mUploadButton;
+
     /** Loading indicator */
     private ProgressBar mLoadingIndicator;
 
@@ -108,6 +135,21 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
 
     /** Currently selected file for context menu operations */
     private RemoteFile mSelectedFile = null;
+
+    /** Progress dialog for file transfers */
+    private AlertDialog mProgressDialog = null;
+
+    /** Progress bar in transfer dialog */
+    private ProgressBar mTransferProgressBar = null;
+
+    /** Progress text in transfer dialog */
+    private TextView mTransferProgressText = null;
+
+    /** Last progress update timestamp for throttling */
+    private long mLastProgressUpdateMs = 0;
+
+    /** Last reported bytes for throttling */
+    private long mLastReportedBytes = 0;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -160,12 +202,40 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         super.onDestroy();
         mIsActive = false;
         mMainThreadHandler.removeCallbacksAndMessages(null);
+
+        // Close progress dialog to prevent memory leak
+        if (mProgressDialog != null && mProgressDialog.isShowing()) {
+            mProgressDialog.dismiss();
+            mProgressDialog = null;
+        }
     }
 
     @Override
     public boolean onSupportNavigateUp() {
         onBackPressed();
         return true;
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        Logger.logDebug(LOG_TAG, "onActivityResult: requestCode=" + requestCode +
+                       " resultCode=" + resultCode + " data=" + (data != null ? data.getData() : "null"));
+
+        if (resultCode != RESULT_OK || data == null) {
+            // User cancelled or no data - just close progress dialog if showing
+            if (mProgressDialog != null && mProgressDialog.isShowing()) {
+                mProgressDialog.dismiss();
+            }
+            return;
+        }
+
+        if (requestCode == REQUEST_CODE_UPLOAD) {
+            handleUploadResult(requestCode, resultCode, data);
+        } else if (requestCode == REQUEST_CODE_DOWNLOAD) {
+            handleDownloadResult(requestCode, resultCode, data);
+        }
     }
 
     /**
@@ -178,6 +248,7 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         mBackButton = findViewById(R.id.back_button);
         mRefreshButton = findViewById(R.id.refresh_button);
         mNewFolderButton = findViewById(R.id.new_folder_button);
+        mUploadButton = findViewById(R.id.upload_button);
 
         // Create loading indicator programmatically
         mLoadingIndicator = findViewById(R.id.loading_indicator);
@@ -261,6 +332,9 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         // New folder button - show new folder dialog
         mNewFolderButton.setOnClickListener(v -> showNewFolderDialog());
 
+        // Upload button - trigger SAF file picker
+        mUploadButton.setOnClickListener(v -> startUploadFilePicker());
+
         // File item click - enter directory or show file info
         mFileListView.setOnItemClickListener((parent, view, position, id) -> {
             RemoteFile file = mAdapter.getItem(position);
@@ -268,6 +342,439 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
                 onFileItemClick(file);
             }
         });
+    }
+
+    /**
+     * Start SAF file picker for upload.
+     *
+     * Opens ACTION_OPEN_DOCUMENT Intent allowing user to select any file
+     * from local storage to upload to current remote directory.
+     */
+    private void startUploadFilePicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");  // Allow any file type
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+        Logger.logDebug(LOG_TAG, "Starting SAF upload file picker");
+
+        startActivityForResult(intent, REQUEST_CODE_UPLOAD);
+    }
+
+    /**
+     * Start SAF file saver for download.
+     *
+     * Opens ACTION_CREATE_DOCUMENT Intent allowing user to choose where
+     * to save the downloaded file on local storage.
+     *
+     * @param fileName Default file name to suggest
+     */
+    private void startDownloadFileSaver(@NonNull String fileName) {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");  // Allow any file type
+        intent.putExtra(Intent.EXTRA_TITLE, fileName);
+        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+        Logger.logDebug(LOG_TAG, "Starting SAF download file saver for: " + fileName);
+
+        startActivityForResult(intent, REQUEST_CODE_DOWNLOAD);
+    }
+
+    /**
+     * Show progress dialog for file transfer.
+     *
+     * Creates an AlertDialog with ProgressBar and progress text.
+     * Dialog is non-cancellable to prevent interrupting transfer.
+     *
+     * @param title Dialog title (e.g., "Uploading..." or "Downloading...")
+     * @return The created AlertDialog
+     */
+    @NonNull
+    private AlertDialog showTransferProgressDialog(@NonNull String title) {
+        // Reset throttling state
+        mLastProgressUpdateMs = 0;
+        mLastReportedBytes = 0;
+
+        // Inflate dialog layout
+        LayoutInflater inflater = LayoutInflater.from(this);
+        View dialogView = inflater.inflate(R.layout.dialog_transfer_progress, null);
+
+        // Find views
+        mTransferProgressBar = dialogView.findViewById(R.id.transfer_progress_bar);
+        mTransferProgressText = dialogView.findViewById(R.id.transfer_progress_text);
+
+        // Set initial state
+        mTransferProgressBar.setProgress(0);
+        mTransferProgressText.setText(getString(R.string.transfer_progress, 0, 0));
+
+        // Create non-cancellable dialog
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(dialogView)
+            .setCancelable(false)  // Prevent user cancelling mid-transfer
+            .create();
+
+        dialog.show();
+        mProgressDialog = dialog;
+
+        return dialog;
+    }
+
+    /**
+     * Handle SAF upload result.
+     *
+     * Gets InputStream from content URI, retrieves file name and size,
+     * then executes upload via RemoteFileTransfer.
+     *
+     * @param requestCode Request code (unused, for consistency)
+     * @param resultCode Result code (should be RESULT_OK)
+     * @param data Intent containing content URI
+     */
+    private void handleUploadResult(int requestCode, int resultCode, @Nullable Intent data) {
+        if (data == null || data.getData() == null) {
+            Logger.logError(LOG_TAG, "Upload result has no data");
+            showError(getString(R.string.error_upload_failed));
+            return;
+        }
+
+        Uri uri = data.getData();
+        Logger.logDebug(LOG_TAG, "Upload URI: " + uri.toString());
+
+        // Take persistable URI permission
+        try {
+            getContentResolver().takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            );
+        } catch (SecurityException e) {
+            Logger.logError(LOG_TAG, "Failed to take persistable permission: " + e.getMessage());
+            // Continue anyway - permission may already exist
+        }
+
+        // Get file info from URI
+        String fileNameRaw = getFileNameFromUri(uri);
+        long fileSize = getFileSizeFromUri(uri);
+
+        // Use default name if not available
+        final String fileName = (fileNameRaw == null || fileNameRaw.isEmpty()) ? "uploaded_file" : fileNameRaw;
+
+        Logger.logDebug(LOG_TAG, "Upload file: " + fileName + " size: " + fileSize);
+
+        // Show progress dialog
+        showTransferProgressDialog(getString(R.string.title_uploading));
+
+        // Compute remote destination path
+        String basePath = mCurrentPath.endsWith("/") ? mCurrentPath : mCurrentPath + "/";
+        final String remotePath = basePath + fileName;
+
+        // Execute upload in background thread
+        new Thread(() -> {
+            ContentResolver resolver = getContentResolver();
+            InputStream inputStream = null;
+
+            try {
+                inputStream = resolver.openInputStream(uri);
+                if (inputStream == null) {
+                    String errorMsg = "Failed to open local file";
+                    Logger.logError(LOG_TAG, errorMsg);
+                    mMainThreadHandler.post(() -> {
+                        closeProgressDialog();
+                        showError(getString(R.string.error_upload_failed) + ": " + errorMsg);
+                    });
+                    return;
+                }
+
+                // Execute upload with progress callback
+                RemoteFileTransfer.TransferResult result = RemoteFileTransfer.upload(
+                    this,
+                    mConnectionInfo,
+                    inputStream,
+                    fileName,
+                    fileSize,
+                    remotePath,
+                    new RemoteFileTransfer.ProgressCallback() {
+                        @Override
+                        public void onProgress(long bytesTransferred, long totalBytes) {
+                            updateTransferProgress(bytesTransferred, totalBytes);
+                        }
+
+                        @Override
+                        public void onComplete(@NonNull RemoteFileTransfer.TransferResult result) {
+                            // Handled after upload returns
+                        }
+                    }
+                );
+
+                // Close input stream
+                try {
+                    inputStream.close();
+                } catch (Exception e) {
+                    Logger.logError(LOG_TAG, "Failed to close input stream: " + e.getMessage());
+                }
+
+                // Handle result on main thread
+                mMainThreadHandler.post(() -> {
+                    closeProgressDialog();
+
+                    if (result.success) {
+                        Toast.makeText(this, getString(R.string.success_file_uploaded), Toast.LENGTH_SHORT).show();
+                        // Refresh directory to show uploaded file
+                        loadDirectory(mCurrentPath);
+                    } else {
+                        String errorMsg = result.errorMessage != null
+                            ? result.errorMessage
+                            : getString(R.string.error_upload_failed);
+                        showError(getString(R.string.error_upload_failed) + ": " + errorMsg);
+                        Logger.logError(LOG_TAG, "Upload failed: " + result);
+                    }
+                });
+
+            } catch (SecurityException e) {
+                Logger.logError(LOG_TAG, "Security exception reading file: " + e.getMessage());
+                mMainThreadHandler.post(() -> {
+                    closeProgressDialog();
+                    showError(getString(R.string.error_upload_failed) + ": Permission denied");
+                });
+            } catch (Exception e) {
+                Logger.logError(LOG_TAG, "Exception during upload: " + e.getMessage());
+                mMainThreadHandler.post(() -> {
+                    closeProgressDialog();
+                    showError(getString(R.string.error_upload_failed) + ": " + e.getMessage());
+                });
+            }
+        }).start();
+    }
+
+    /**
+     * Handle SAF download result.
+     *
+     * Gets OutputStream from content URI, then executes download
+     * via RemoteFileTransfer for the selected file.
+     *
+     * @param requestCode Request code (unused, for consistency)
+     * @param resultCode Result code (should be RESULT_OK)
+     * @param data Intent containing content URI
+     */
+    private void handleDownloadResult(int requestCode, int resultCode, @Nullable Intent data) {
+        if (data == null || data.getData() == null) {
+            Logger.logError(LOG_TAG, "Download result has no data");
+            showError(getString(R.string.error_download_failed));
+            return;
+        }
+
+        if (mSelectedFile == null) {
+            Logger.logError(LOG_TAG, "No file selected for download");
+            showError(getString(R.string.error_download_failed));
+            return;
+        }
+
+        Uri uri = data.getData();
+        Logger.logDebug(LOG_TAG, "Download URI: " + uri.toString());
+
+        // Take persistable URI permission
+        try {
+            getContentResolver().takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            );
+        } catch (SecurityException e) {
+            Logger.logError(LOG_TAG, "Failed to take persistable permission: " + e.getMessage());
+            // Continue anyway - permission may already exist
+        }
+
+        // Show progress dialog
+        showTransferProgressDialog(getString(R.string.title_downloading));
+
+        // Execute download in background thread
+        new Thread(() -> {
+            ContentResolver resolver = getContentResolver();
+            OutputStream outputStream = null;
+
+            try {
+                outputStream = resolver.openOutputStream(uri);
+                if (outputStream == null) {
+                    String errorMsg = "Failed to open local file for writing";
+                    Logger.logError(LOG_TAG, errorMsg);
+                    mMainThreadHandler.post(() -> {
+                        closeProgressDialog();
+                        showError(getString(R.string.error_download_failed) + ": " + errorMsg);
+                    });
+                    return;
+                }
+
+                // Execute download with progress callback
+                RemoteFileTransfer.TransferResult result = RemoteFileTransfer.download(
+                    this,
+                    mConnectionInfo,
+                    mSelectedFile.getPath(),
+                    outputStream,
+                    new RemoteFileTransfer.ProgressCallback() {
+                        @Override
+                        public void onProgress(long bytesTransferred, long totalBytes) {
+                            updateTransferProgress(bytesTransferred, totalBytes);
+                        }
+
+                        @Override
+                        public void onComplete(@NonNull RemoteFileTransfer.TransferResult result) {
+                            // Handled after download returns
+                        }
+                    }
+                );
+
+                // Close output stream
+                try {
+                    outputStream.close();
+                } catch (Exception e) {
+                    Logger.logError(LOG_TAG, "Failed to close output stream: " + e.getMessage());
+                }
+
+                // Handle result on main thread
+                mMainThreadHandler.post(() -> {
+                    closeProgressDialog();
+
+                    if (result.success) {
+                        Toast.makeText(this, getString(R.string.success_file_downloaded), Toast.LENGTH_SHORT).show();
+                    } else {
+                        String errorMsg = result.errorMessage != null
+                            ? result.errorMessage
+                            : getString(R.string.error_download_failed);
+                        showError(getString(R.string.error_download_failed) + ": " + errorMsg);
+                        Logger.logError(LOG_TAG, "Download failed: " + result);
+                    }
+                });
+
+            } catch (SecurityException e) {
+                Logger.logError(LOG_TAG, "Security exception writing file: " + e.getMessage());
+                mMainThreadHandler.post(() -> {
+                    closeProgressDialog();
+                    showError(getString(R.string.error_download_failed) + ": Permission denied");
+                });
+            } catch (Exception e) {
+                Logger.logError(LOG_TAG, "Exception during download: " + e.getMessage());
+                mMainThreadHandler.post(() -> {
+                    closeProgressDialog();
+                    showError(getString(R.string.error_download_failed) + ": " + e.getMessage());
+                });
+            }
+        }).start();
+    }
+
+    /**
+     * Update progress dialog UI with throttling.
+     *
+     * Throttles updates to avoid UI flooding: max one update per
+     * PROGRESS_UPDATE_INTERVAL_MS or per PROGRESS_UPDATE_MIN_BYTES change.
+     *
+     * @param bytesTransferred Bytes transferred so far
+     * @param totalBytes Total bytes to transfer
+     */
+    private void updateTransferProgress(long bytesTransferred, long totalBytes) {
+        long now = System.currentTimeMillis();
+        long bytesDelta = Math.abs(bytesTransferred - mLastReportedBytes);
+
+        // Throttle: skip update if too soon and not enough byte change
+        if ((now - mLastProgressUpdateMs < PROGRESS_UPDATE_INTERVAL_MS) &&
+            (bytesDelta < PROGRESS_UPDATE_MIN_BYTES) &&
+            (bytesTransferred > 0 && bytesTransferred < totalBytes)) {
+            return;
+        }
+
+        mLastProgressUpdateMs = now;
+        mLastReportedBytes = bytesTransferred;
+
+        mMainThreadHandler.post(() -> {
+            if (mTransferProgressBar != null && mTransferProgressText != null) {
+                int progressPercent = 0;
+                if (totalBytes > 0) {
+                    progressPercent = (int) ((bytesTransferred * 100) / totalBytes);
+                }
+                mTransferProgressBar.setProgress(progressPercent);
+                mTransferProgressText.setText(getString(R.string.transfer_progress, bytesTransferred, totalBytes));
+            }
+        });
+    }
+
+    /**
+     * Close progress dialog safely.
+     */
+    private void closeProgressDialog() {
+        if (mProgressDialog != null && mProgressDialog.isShowing()) {
+            mProgressDialog.dismiss();
+        }
+        mProgressDialog = null;
+        mTransferProgressBar = null;
+        mTransferProgressText = null;
+    }
+
+    /**
+     * Get file name from content URI.
+     *
+     * Queries ContentResolver for OpenableColumns.DISPLAY_NAME.
+     *
+     * @param uri Content URI to query
+     * @return File name or null if not available
+     */
+    @Nullable
+    private String getFileNameFromUri(@NonNull Uri uri) {
+        String fileName = null;
+
+        try {
+            Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null);
+            if (cursor != null) {
+                try {
+                    if (cursor.moveToFirst()) {
+                        int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                        if (nameIndex >= 0) {
+                            fileName = cursor.getString(nameIndex);
+                        }
+                    }
+                } finally {
+                    cursor.close();
+                }
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to get file name: " + e.getMessage());
+        }
+
+        // Fallback: use last path segment
+        if (fileName == null || fileName.isEmpty()) {
+            fileName = uri.getLastPathSegment();
+        }
+
+        return fileName;
+    }
+
+    /**
+     * Get file size from content URI.
+     *
+     * Queries ContentResolver for OpenableColumns.SIZE.
+     *
+     * @param uri Content URI to query
+     * @return File size in bytes, or 0 if not available
+     */
+    private long getFileSizeFromUri(@NonNull Uri uri) {
+        long fileSize = 0;
+
+        try {
+            Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null);
+            if (cursor != null) {
+                try {
+                    if (cursor.moveToFirst()) {
+                        int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
+                        if (sizeIndex >= 0) {
+                            fileSize = cursor.getLong(sizeIndex);
+                        }
+                    }
+                } finally {
+                    cursor.close();
+                }
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to get file size: " + e.getMessage());
+        }
+
+        return fileSize;
     }
 
     /**
@@ -371,6 +878,7 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         mBackButton.setEnabled(!isLoading && !mPathStack.isEmpty());
         mRefreshButton.setEnabled(!isLoading);
         mNewFolderButton.setEnabled(!isLoading);
+        mUploadButton.setEnabled(!isLoading);
     }
 
     /**
@@ -533,6 +1041,12 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         // Inflate the context menu
         getMenuInflater().inflate(R.menu.context_menu_remote_file, menu);
 
+        // Hide download menu for directories (only files can be downloaded)
+        MenuItem downloadItem = menu.findItem(R.id.menu_download);
+        if (downloadItem != null) {
+            downloadItem.setVisible(!mSelectedFile.isDirectory());
+        }
+
         Logger.logDebug(LOG_TAG, "Context menu created for: " + mSelectedFile.getName());
     }
 
@@ -546,7 +1060,13 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         int itemId = item.getItemId();
         Logger.logDebug(LOG_TAG, "Context menu item selected: " + itemId + " for file: " + mSelectedFile.getName());
 
-        if (itemId == R.id.menu_rename) {
+        if (itemId == R.id.menu_download) {
+            // Only download files, not directories
+            if (!mSelectedFile.isDirectory()) {
+                startDownloadFileSaver(mSelectedFile.getName());
+            }
+            return true;
+        } else if (itemId == R.id.menu_rename) {
             showRenameDialog(mSelectedFile);
             return true;
         } else if (itemId == R.id.menu_delete) {

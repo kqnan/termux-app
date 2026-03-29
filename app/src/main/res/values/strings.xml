@@ -269,4 +269,17 @@
     <string name="success_directory_renamed">Directory renamed</string>
     <string name="success_folder_created">Folder created</string>
 
+    <!-- File Transfer -->
+    <string name="action_upload">Upload</string>
+    <string name="action_download">Download</string>
+    <string name="title_uploading">Uploading…</string>
+    <string name="title_downloading">Downloading…</string>
+    <string name="transfer_progress">%1$d / %2$d bytes</string>
+    <string name="success_file_uploaded">File uploaded successfully</string>
+    <string name="success_file_downloaded">File downloaded successfully</string>
+    <string name="error_upload_failed">Upload failed</string>
+    <string name="error_download_failed">Download failed</string>
+    <string name="error_transfer_connection">Connection not available</string>
+    <string name="error_transfer_timeout">Connection timeout</string>
+
 </resources>

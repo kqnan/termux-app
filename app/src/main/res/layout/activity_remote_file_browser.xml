@@ -109,6 +109,14 @@
             android:text="@string/action_new_folder" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/upload_button"
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/action_upload" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/refresh_button"
             style="?android:attr/buttonBarButtonStyle"
             android:layout_width="match_parent"

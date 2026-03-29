@@ -235,4 +235,16 @@
     <!-- Donate Preference -->
     <string name="donate_preference_title">Donate</string>
 
+
+
+    <!-- Remote File Browser -->
+    <string name="title_remote_file_browser">Remote File Browser</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="back_to_parent_directory">Back to parent directory</string>
+    <string name="file_type_icon">File type icon</string>
+    <string name="empty_directory">Empty directory</string>
+    <string name="error_listing_directory">Failed to list directory contents</string>
+    <string name="error_not_connected">Not connected to SSH server</string>
+    <string name="directory_size">-</string>
+
 </resources>

@@ -247,4 +247,26 @@
     <string name="error_not_connected">Not connected to SSH server</string>
     <string name="directory_size">-</string>
 
+    <!-- Remote File Context Menu -->
+    <string name="action_rename">Rename</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_move">Move</string>
+    <string name="action_new_folder">New Folder</string>
+    <string name="title_confirm_delete">Confirm Delete</string>
+    <string name="message_confirm_delete_file">Delete file \"%s\"?</string>
+    <string name="message_confirm_delete_directory">Delete directory \"%s\" and all contents?</string>
+    <string name="title_rename_file">Rename File</string>
+    <string name="title_rename_directory">Rename Directory</string>
+    <string name="title_new_folder">New Folder</string>
+    <string name="hint_folder_name">Folder name</string>
+    <string name="error_rename_failed">Failed to rename</string>
+    <string name="error_delete_failed">Failed to delete</string>
+    <string name="error_mkdir_failed">Failed to create folder</string>
+    <string name="success_file_deleted">File deleted</string>
+    <string name="success_directory_deleted">Directory deleted</string>
+    <string name="success_file_renamed">File renamed</string>
+    <string name="success_directory_renamed">Directory renamed</string>
+    <string name="success_folder_created">Folder created</string>
+
 </resources>

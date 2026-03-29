@@ -4,6 +4,9 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.ContextMenu;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
@@ -20,10 +23,13 @@ import com.termux.R;
 import com.termux.app.ssh.RemoteFile;
 import com.termux.app.ssh.RemoteFileListAdapter;
 import com.termux.app.ssh.RemoteFileLister;
+import com.termux.app.ssh.RemoteFileOperator;
 import com.termux.app.ssh.SSHConnectionInfo;
+import com.termux.shared.interact.MessageDialogUtils;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.theme.NightMode;
 import com.termux.shared.activity.media.AppCompatActivityUtils;
+import com.termux.shared.termux.interact.TextInputDialogUtils;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -96,6 +102,9 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
 
     /** Flag indicating if activity is still active */
     private boolean mIsActive = false;
+
+    /** Currently selected file for context menu operations */
+    private RemoteFile mSelectedFile = null;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -176,6 +185,9 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         // Create adapter with empty list
         mAdapter = new RemoteFileListAdapter(this, new ArrayList<>());
         mFileListView.setAdapter(mAdapter);
+
+        // Register for context menu (long press)
+        registerForContextMenu(mFileListView);
     }
 
     /**
@@ -490,5 +502,242 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
 
         segmentView.setPadding(8, 8, 8, 8);
         mBreadcrumbPathLayout.addView(segmentView);
+    }
+
+    @Override
+    public void onCreateContextMenu(ContextMenu menu, View v, ContextMenu.ContextMenuInfo menuInfo) {
+        super.onCreateContextMenu(menu, v, menuInfo);
+
+        // Get the selected file from the adapter
+        android.widget.AdapterView.AdapterContextMenuInfo info =
+            (android.widget.AdapterView.AdapterContextMenuInfo) menuInfo;
+        int position = info.position;
+
+        mSelectedFile = mAdapter.getItem(position);
+        if (mSelectedFile == null) {
+            Logger.logError(LOG_TAG, "Selected file is null at position " + position);
+            return;
+        }
+
+        // Set context menu header with file name
+        menu.setHeaderTitle(mSelectedFile.getName());
+
+        // Inflate the context menu
+        getMenuInflater().inflate(R.menu.context_menu_remote_file, menu);
+
+        Logger.logDebug(LOG_TAG, "Context menu created for: " + mSelectedFile.getName());
+    }
+
+    @Override
+    public boolean onContextItemSelected(@NonNull MenuItem item) {
+        if (mSelectedFile == null) {
+            Logger.logError(LOG_TAG, "No file selected for context menu action");
+            return super.onContextItemSelected(item);
+        }
+
+        int itemId = item.getItemId();
+        Logger.logDebug(LOG_TAG, "Context menu item selected: " + itemId + " for file: " + mSelectedFile.getName());
+
+        if (itemId == R.id.menu_rename) {
+            showRenameDialog(mSelectedFile);
+            return true;
+        } else if (itemId == R.id.menu_delete) {
+            showDeleteConfirmationDialog(mSelectedFile);
+            return true;
+        } else if (itemId == R.id.menu_new_folder) {
+            showNewFolderDialog();
+            return true;
+        }
+        // Copy and Move will be implemented in later slices
+
+        return super.onContextItemSelected(item);
+    }
+
+    /**
+     * Show delete confirmation dialog for a file or directory.
+     *
+     * @param file File to delete
+     */
+    private void showDeleteConfirmationDialog(@NonNull RemoteFile file) {
+        String title = getString(R.string.title_confirm_delete);
+        String message = file.isDirectory()
+            ? getString(R.string.message_confirm_delete_directory, file.getName())
+            : getString(R.string.message_confirm_delete_file, file.getName());
+
+        MessageDialogUtils.showMessage(
+            this,
+            title,
+            message,
+            getString(android.R.string.yes),
+            (dialog, which) -> executeDelete(file),
+            getString(android.R.string.no),
+            null,
+            null
+        );
+    }
+
+    /**
+     * Execute delete operation on a file or directory.
+     *
+     * @param file File to delete
+     */
+    private void executeDelete(@NonNull RemoteFile file) {
+        Logger.logDebug(LOG_TAG, "Executing delete for: " + file.getPath());
+
+        new Thread(() -> {
+            RemoteFileOperator.OperationResult result = RemoteFileOperator.delete(
+                this,
+                mConnectionInfo,
+                file.getPath(),
+                file.isDirectory(),  // recursive if directory
+                true                  // force
+            );
+
+            mMainThreadHandler.post(() -> {
+                if (result.success) {
+                    String message = file.isDirectory()
+                        ? getString(R.string.success_directory_deleted)
+                        : getString(R.string.success_file_deleted);
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+                    // Refresh the directory listing
+                    loadDirectory(mCurrentPath);
+                } else {
+                    String error = getString(R.string.error_delete_failed);
+                    if (result.errorMessage != null) {
+                        error = error + ": " + result.errorMessage;
+                    }
+                    Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                    Logger.logError(LOG_TAG, "Delete failed: " + result);
+                }
+            });
+        }).start();
+    }
+
+    /**
+     * Show rename dialog for a file or directory.
+     *
+     * @param file File to rename
+     */
+    private void showRenameDialog(@NonNull RemoteFile file) {
+        // Use same title for both files and directories - TextInputDialogUtils requires resource ID
+        TextInputDialogUtils.textInput(
+            this,
+            R.string.action_rename,
+            file.getName(),
+            android.R.string.ok,
+            newText -> executeRename(file, newText),
+            0,  // neutralButtonText (not used)
+            null,
+            android.R.string.cancel,
+            null,
+            null
+        );
+    }
+
+    /**
+     * Execute rename operation on a file or directory.
+     *
+     * @param file File to rename
+     * @param newName New name for the file
+     */
+    private void executeRename(@NonNull RemoteFile file, @NonNull String newName) {
+        if (newName == null || newName.trim().isEmpty()) {
+            Toast.makeText(this, "Name cannot be empty", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (newName.equals(file.getName())) {
+            Toast.makeText(this, "Name unchanged", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Logger.logDebug(LOG_TAG, "Executing rename for: " + file.getPath() + " to: " + newName);
+
+        new Thread(() -> {
+            RemoteFileOperator.OperationResult result = RemoteFileOperator.rename(
+                this,
+                mConnectionInfo,
+                file.getPath(),
+                newName.trim()
+            );
+
+            mMainThreadHandler.post(() -> {
+                if (result.success) {
+                    String message = file.isDirectory()
+                        ? getString(R.string.success_directory_renamed)
+                        : getString(R.string.success_file_renamed);
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+                    // Refresh the directory listing
+                    loadDirectory(mCurrentPath);
+                } else {
+                    String error = getString(R.string.error_rename_failed);
+                    if (result.errorMessage != null) {
+                        error = error + ": " + result.errorMessage;
+                    }
+                    Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                    Logger.logError(LOG_TAG, "Rename failed: " + result);
+                }
+            });
+        }).start();
+    }
+
+    /**
+     * Show new folder dialog to create a directory in current path.
+     */
+    private void showNewFolderDialog() {
+        TextInputDialogUtils.textInput(
+            this,
+            R.string.title_new_folder,
+            "",
+            android.R.string.ok,
+            folderName -> executeMkdir(folderName),
+            0,  // neutralButtonText (not used)
+            null,
+            android.R.string.cancel,
+            null,
+            null
+        );
+    }
+
+    /**
+     * Execute mkdir operation to create a new folder.
+     *
+     * @param folderName Name of the folder to create
+     */
+    private void executeMkdir(@NonNull String folderName) {
+        if (folderName == null || folderName.trim().isEmpty()) {
+            Toast.makeText(this, "Folder name cannot be empty", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Compute full path - must be final for lambda
+        String basePath = mCurrentPath.endsWith("/") ? mCurrentPath : mCurrentPath + "/";
+        final String newPath = basePath + folderName.trim();
+
+        Logger.logDebug(LOG_TAG, "Executing mkdir at: " + newPath);
+
+        new Thread(() -> {
+            RemoteFileOperator.OperationResult result = RemoteFileOperator.mkdir(
+                this,
+                mConnectionInfo,
+                newPath,
+                false  // createParents - just create single directory
+            );
+
+            mMainThreadHandler.post(() -> {
+                if (result.success) {
+                    Toast.makeText(this, getString(R.string.success_folder_created), Toast.LENGTH_SHORT).show();
+                    // Refresh the directory listing
+                    loadDirectory(mCurrentPath);
+                } else {
+                    String error = getString(R.string.error_mkdir_failed);
+                    if (result.errorMessage != null) {
+                        error = error + ": " + result.errorMessage;
+                    }
+                    Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                    Logger.logError(LOG_TAG, "Mkdir failed: " + result);
+                }
+            });
+        }).start();
     }
 }

@@ -1,12 +1,18 @@
 package com.termux.app.ssh;
 
+import java.io.Serializable;
+
 /**
  * Data class representing an active SSH connection via ControlMaster.
  *
  * Stores connection details parsed from control socket filename.
  * Socket naming pattern: user@host:port
+ *
+ * Implements Serializable for passing via Intent extras.
  */
-public class SSHConnectionInfo {
+public class SSHConnectionInfo implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     /** Username for SSH connection */
     private final String user;

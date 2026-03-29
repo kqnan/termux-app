@@ -7,6 +7,11 @@
     android:orientation="vertical"
     android:fitsSystemWindows="true">
 
+    <!-- Toolbar -->
+    <include
+        layout="@layout/partial_primary_toolbar"
+        android:id="@+id/partial_primary_toolbar" />
+
     <!-- Breadcrumb navigation area -->
     <LinearLayout
         android:id="@+id/breadcrumb_container"
@@ -53,6 +58,16 @@
         android:layout_width="match_parent"
         android:layout_height="1dp"
         android:background="?android:attr/listDivider" />
+
+    <!-- Loading indicator -->
+    <ProgressBar
+        android:id="@+id/loading_indicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone"
+        android:indeterminate="true"
+        android:padding="16dp" />
 
     <!-- File list -->
     <ListView

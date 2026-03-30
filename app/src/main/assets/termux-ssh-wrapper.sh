@@ -8,6 +8,9 @@
 # Usage: This script can be used as an alias or wrapper for ssh commands.
 # Example alias in .bashrc:
 #   alias ssh='termux-ssh-wrapper.sh'
+# 
+# Note: This script calls 'ssh-real' (the original SSH binary) internally,
+# so it won't cause infinite recursion even if aliased as 'ssh'.
 #
 # Verification:
 #   ssh -O check <host>  # Check if control socket is active
@@ -31,4 +34,5 @@ SSH_OPTIONS=(
 )
 
 # Execute ssh with ControlMaster options
-exec ssh "${SSH_OPTIONS[@]}" "$@"
+# Call ssh-real (the original SSH binary) directly to avoid recursion
+exec "${TERMUX_SSH_BINARY:-ssh-real}" "${SSH_OPTIONS[@]}" "$@"

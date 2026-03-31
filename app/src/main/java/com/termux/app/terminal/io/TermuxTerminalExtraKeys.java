@@ -109,6 +109,8 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
         } else if ("F".equals(key)) {
             // F button: Launch RemoteFileBrowserActivity if SSH connection active
             Logger.logDebug(LOG_TAG, "F button clicked");
+            // Trigger SSH wrapper installation for users who installed openssh after first launch
+            SSHControlMasterInstaller.install(mActivity);
             List<SSHConnectionInfo> connections = SSHControlMasterInstaller.getActiveConnections();
             Logger.logDebug(LOG_TAG, "Active SSH connections: " + connections.size());
 

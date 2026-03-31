@@ -1,7 +1,6 @@
 package com.termux.app.ssh;
 
 import android.content.Context;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -12,6 +11,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 
 import com.termux.R;
 import com.termux.shared.theme.NightMode;
@@ -33,7 +33,6 @@ public class RemoteFileListAdapter extends ArrayAdapter<RemoteFile> {
 
     private final Context mContext;
     private final int mResourceId;
-    private final boolean mShouldEnableDarkTheme;
 
     /**
      * Create a new RemoteFileListAdapter.
@@ -45,8 +44,6 @@ public class RemoteFileListAdapter extends ArrayAdapter<RemoteFile> {
         super(context, R.layout.item_remote_file, files);
         this.mContext = context;
         this.mResourceId = R.layout.item_remote_file;
-        this.mShouldEnableDarkTheme = ThemeUtils.shouldEnableDarkTheme(
-            context, NightMode.getAppNightMode().getName());
     }
 
     @NonNull
@@ -80,14 +77,14 @@ public class RemoteFileListAdapter extends ArrayAdapter<RemoteFile> {
         // Set file icon based on type
         setFileIcon(holder.iconView, file);
 
-        // Set file name with styling
+        // Set file name with Morandi theme colors
         holder.nameView.setText(file.getName());
         if (file.isDirectory()) {
             holder.nameView.setTypeface(holder.nameView.getTypeface(), Typeface.BOLD);
-            holder.nameView.setTextColor(mShouldEnableDarkTheme ? Color.CYAN : Color.BLUE);
+            holder.nameView.setTextColor(ContextCompat.getColor(mContext, R.color.morandi_directory_name));
         } else {
             holder.nameView.setTypeface(Typeface.create(holder.nameView.getTypeface(), Typeface.NORMAL), Typeface.NORMAL);
-            holder.nameView.setTextColor(mShouldEnableDarkTheme ? Color.WHITE : Color.BLACK);
+            holder.nameView.setTextColor(ContextCompat.getColor(mContext, R.color.morandi_file_name));
         }
 
         // Set file size (show "-" for directories)
@@ -131,9 +128,8 @@ public class RemoteFileListAdapter extends ArrayAdapter<RemoteFile> {
         }
         iconView.setImageResource(iconResId);
 
-        // Set icon tint based on theme
-        int tint = mShouldEnableDarkTheme ? Color.WHITE : Color.BLACK;
-        iconView.setColorFilter(tint);
+        // Set icon tint using Morandi theme color
+        iconView.setColorFilter(ContextCompat.getColor(mContext, R.color.morandi_icon_primary));
     }
 
     /**

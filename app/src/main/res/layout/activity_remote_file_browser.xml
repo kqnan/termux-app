@@ -19,7 +19,7 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:padding="8dp"
-        android:background="@color/grey_200"
+        android:background="@color/morandi_breadcrumb_background"
         android:gravity="start|center_vertical">
 
         <!-- Back button -->

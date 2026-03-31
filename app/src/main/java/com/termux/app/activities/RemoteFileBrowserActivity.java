@@ -219,6 +219,17 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
     }
 
     @Override
+    public void onBackPressed() {
+        if (!mPathStack.isEmpty()) {
+            // Navigate to parent directory instead of exiting
+            navigateToParent();
+        } else {
+            // At root level - exit the activity
+            super.onBackPressed();
+        }
+    }
+
+    @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 

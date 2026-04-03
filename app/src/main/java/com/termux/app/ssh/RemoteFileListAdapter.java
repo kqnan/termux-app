@@ -79,7 +79,8 @@ public class RemoteFileListAdapter extends ArrayAdapter<RemoteFile> {
 
         // Set file name with Morandi theme colors
         holder.nameView.setText(file.getName());
-        if (file.isDirectory()) {
+        if (file.isDirectoryOrSymlinkToDirectory()) {
+            // Symlink to directory shows bold + directory color
             holder.nameView.setTypeface(holder.nameView.getTypeface(), Typeface.BOLD);
             holder.nameView.setTextColor(ContextCompat.getColor(mContext, R.color.morandi_directory_name));
         } else {
@@ -119,9 +120,11 @@ public class RemoteFileListAdapter extends ArrayAdapter<RemoteFile> {
      */
     private void setFileIcon(ImageView iconView, RemoteFile file) {
         int iconResId;
-        if (file.isDirectory()) {
+        if (file.isDirectoryOrSymlinkToDirectory()) {
+            // Symlink to directory shows folder icon
             iconResId = R.drawable.ic_folder;
         } else if (file.isSymlink()) {
+            // Symlink to file shows symlink icon
             iconResId = R.drawable.ic_symlink;
         } else {
             iconResId = R.drawable.ic_file;

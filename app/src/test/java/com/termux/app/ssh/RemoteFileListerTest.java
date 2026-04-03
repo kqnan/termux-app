@@ -204,4 +204,29 @@ public class RemoteFileListerTest {
         assertTrue(symlink.isSymlink());
         assertEquals("/target", symlink.getSymlinkTarget());
     }
+
+    @Test
+    public void testRemoteFileIsDirectoryOrSymlinkToDirectory() {
+        // Regular directory
+        RemoteFile dir = new RemoteFile("dir", "/dir", RemoteFile.FileType.DIRECTORY, 
+            0, "Jan 1 10:00", "rwxr-xr-x", "user", "group", null);
+        assertTrue("Regular directory should return true", dir.isDirectoryOrSymlinkToDirectory());
+
+        // Symlink pointing to directory
+        RemoteFile symlinkToDir = new RemoteFile("linkdir", "/linkdir", RemoteFile.FileType.SYMLINK, 
+            10, "Jan 1 10:00", "rwxrwxrwx", "user", "group", "/actual_dir", true);
+        assertTrue("Symlink to directory should return true", symlinkToDir.isDirectoryOrSymlinkToDirectory());
+        assertTrue("symlinkTargetIsDirectory should be true", symlinkToDir.isSymlinkTargetDirectory());
+
+        // Symlink pointing to file
+        RemoteFile symlinkToFile = new RemoteFile("linkfile", "/linkfile", RemoteFile.FileType.SYMLINK, 
+            10, "Jan 1 10:00", "rwxrwxrwx", "user", "group", "/actual_file.txt", false);
+        assertFalse("Symlink to file should return false", symlinkToFile.isDirectoryOrSymlinkToDirectory());
+        assertFalse("symlinkTargetIsDirectory should be false", symlinkToFile.isSymlinkTargetDirectory());
+
+        // Regular file
+        RemoteFile file = new RemoteFile("file", "/file", RemoteFile.FileType.FILE, 
+            100, "Jan 1 10:00", "rw-r--r--", "user", "group", null);
+        assertFalse("Regular file should return false", file.isDirectoryOrSymlinkToDirectory());
+    }
 }

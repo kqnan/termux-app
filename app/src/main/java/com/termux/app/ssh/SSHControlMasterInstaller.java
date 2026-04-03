@@ -118,6 +118,7 @@ public class SSHControlMasterInstaller {
 
     /**
      * Check if SSH ControlMaster is already installed with current version.
+     * Validates both marker file AND symlink status to detect openssh updates.
      */
     private static boolean isAlreadyInstalled() {
         File marker = new File(INSTALL_MARKER_PATH);
@@ -125,6 +126,7 @@ public class SSHControlMasterInstaller {
             return false;
         }
 
+        // Validate marker version
         try {
             StringBuilder sb = new StringBuilder();
             Error error = FileUtils.readTextFromFile("SSH marker", marker.getAbsolutePath(),
@@ -133,10 +135,43 @@ public class SSHControlMasterInstaller {
                 return false;
             }
             int version = Integer.parseInt(sb.toString().trim());
-            return version >= INSTALL_VERSION;
+            if (version < INSTALL_VERSION) {
+                return false;
+            }
         } catch (Exception e) {
             return false;
         }
+
+        // CRITICAL: Validate symlink status - openssh update can overwrite symlink with binary
+        File sshBinary = new File(SSH_BINARY_PATH);
+        if (!sshBinary.exists()) {
+            return false;  // ssh binary doesn't exist at all
+        }
+
+        // Check if ssh is a symlink (not an ELF binary from openssh update)
+        try {
+            android.system.StructStat stat = Os.lstat(sshBinary.getAbsolutePath());
+            int fileType = stat.st_mode & 0170000;  // S_IFMT in octal
+            int symlinkType = 0120000;  // S_IFLNK in octal
+            
+            if (fileType != symlinkType) {
+                Logger.logWarn(LOG_TAG, "ssh exists but is not a symlink (likely openssh update), triggering reinstall");
+                return false;  // ssh is a regular file/executable, not our symlink
+            }
+
+            // Verify symlink points to the correct wrapper
+            String linkTarget = Os.readlink(sshBinary.getAbsolutePath());
+            if (!SSH_WRAPPER_PATH.equals(linkTarget)) {
+                Logger.logWarn(LOG_TAG, "ssh symlink points to wrong target: " + linkTarget + ", triggering reinstall");
+                return false;
+            }
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to validate ssh symlink status: " + e.getMessage());
+            return false;
+        }
+
+        // All validations passed - wrapper is correctly installed
+        return true;
     }
 
     /**

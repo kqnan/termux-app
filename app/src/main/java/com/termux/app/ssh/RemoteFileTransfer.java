@@ -46,6 +46,9 @@ public class RemoteFileTransfer {
     /** Chunk size for reading/writing data (4KB) */
     private static final int CHUNK_SIZE = 4096;
 
+    /** Chunk size for streaming transfer (1MB) - prevents OOM for large files */
+    private static final int TRANSFER_CHUNK_SIZE = 1024 * 1024;
+
     /** Maximum file size supported (50MB) - larger files may cause memory pressure */
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024;
 
@@ -392,6 +395,180 @@ public class RemoteFileTransfer {
         }
 
         Logger.logDebug(LOG_TAG, "Download succeeded: " + bytesWritten + " bytes from " + remotePath);
+        TransferResult result = TransferResult.success(bytesWritten, fileSize);
+        if (callback != null) callback.onComplete(result);
+        return result;
+    }
+
+    /**
+     * Download a file from remote server using chunked streaming.
+     *
+     * Transfers files in 1MB chunks to prevent OOM for large files.
+     * Each chunk is fetched using dd | base64, decoded, and written to OutputStream.
+     *
+     * @param context Android context
+     * @param connection SSH connection info with control socket
+     * @param remotePath Source path on remote server
+     * @param outputStream OutputStream to write file data (from SAF content URI)
+     * @param callback Progress callback (may be null)
+     * @return TransferResult indicating success or failure
+     */
+    @NonNull
+    public static TransferResult downloadChunked(@NonNull Context context,
+                                                  @NonNull SSHConnectionInfo connection,
+                                                  @NonNull String remotePath,
+                                                  @NonNull OutputStream outputStream,
+                                                  @Nullable ProgressCallback callback) {
+        Logger.logDebug(LOG_TAG, "Chunked download started: " + connection.toString() +
+                       " remotePath=" + remotePath);
+
+        // Pre-validation: check SSH socket exists
+        if (!checkSocketExists(connection.getSocketPath())) {
+            String errorMsg = "SSH connection not available: control socket not found";
+            Logger.logError(LOG_TAG, errorMsg);
+            TransferResult result = TransferResult.failure(errorMsg, null, 0, 0);
+            if (callback != null) callback.onComplete(result);
+            return result;
+        }
+
+        // Get file size first
+        long fileSize = getFileSize(context, connection, remotePath);
+        if (fileSize < 0) {
+            String errorMsg = "Failed to get remote file size: file may not exist or inaccessible";
+            Logger.logError(LOG_TAG, errorMsg);
+            TransferResult result = TransferResult.failure(errorMsg, null, 0, 0);
+            if (callback != null) callback.onComplete(result);
+            return result;
+        }
+
+        Logger.logDebug(LOG_TAG, "Remote file size: " + fileSize + " bytes (" +
+                       formatFileSize(fileSize) + ")");
+
+        // Empty file case: just create empty file locally
+        if (fileSize == 0) {
+            Logger.logDebug(LOG_TAG, "Downloading empty file (0 bytes)");
+            TransferResult result = TransferResult.success(0, 0);
+            if (callback != null) callback.onComplete(result);
+            return result;
+        }
+
+        // Calculate total chunks
+        int totalChunks = (int) (fileSize / TRANSFER_CHUNK_SIZE);
+        if (fileSize % TRANSFER_CHUNK_SIZE != 0) {
+            totalChunks++;
+        }
+
+        Logger.logDebug(LOG_TAG, "Downloading in " + totalChunks + " chunks of " +
+                       TRANSFER_CHUNK_SIZE + " bytes each");
+
+        // Report initial progress
+        if (callback != null) {
+            callback.onProgress(0, fileSize);
+        }
+
+        // Download each chunk
+        long bytesWritten = 0;
+        String escapedPath = RemoteFileOperator.escapePath(remotePath);
+
+        for (int chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            long skipBytes = chunkIndex * TRANSFER_CHUNK_SIZE;
+            long chunkSize = Math.min(TRANSFER_CHUNK_SIZE, fileSize - skipBytes);
+
+            Logger.logDebug(LOG_TAG, "Downloading chunk " + (chunkIndex + 1) + "/" + totalChunks +
+                           " skip=" + skipBytes + " size=" + chunkSize);
+
+            // Execute SSH command: dd if=file bs=1M skip=N count=1 | base64
+            // Note: dd skip uses block count, so skip=N means skip N blocks of bs size
+            String remoteCommand = "dd if=" + escapedPath + " bs=" + TRANSFER_CHUNK_SIZE +
+                                   " skip=" + chunkIndex + " count=1 2>/dev/null | base64";
+
+            String[] commandArgs = buildSSHCommand(connection, remoteCommand, DEFAULT_CONNECT_TIMEOUT);
+            String commandString = joinCommand(commandArgs);
+
+            Logger.logDebug(LOG_TAG, "Executing chunk download command: " + commandString);
+
+            // Create execution command
+            ExecutionCommand executionCommand = new ExecutionCommand(
+                0,
+                SSH_BINARY,
+                commandArgs,
+                null,
+                "/",
+                "ssh-download-chunk-" + chunkIndex,
+                false
+            );
+
+            // Execute synchronously
+            AppShell appShell = AppShell.execute(
+                context,
+                executionCommand,
+                null,
+                new TermuxShellEnvironment(),
+                null,
+                true
+            );
+
+            if (appShell == null) {
+                String errorMsg = "Failed to start SSH command for chunk " + (chunkIndex + 1);
+                Logger.logError(LOG_TAG, errorMsg);
+                TransferResult result = TransferResult.failure(errorMsg, null, bytesWritten, fileSize);
+                if (callback != null) callback.onComplete(result);
+                return result;
+            }
+
+            // Extract results
+            Integer exitCode = executionCommand.resultData.exitCode;
+            String stdout = executionCommand.resultData.stdout.toString();
+            String stderr = executionCommand.resultData.stderr.toString();
+
+            Logger.logDebug(LOG_TAG, "Chunk " + (chunkIndex + 1) + " SSH command completed: exitCode=" +
+                           exitCode + " stdoutLen=" + stdout.length());
+
+            if (exitCode != null && exitCode != 0) {
+                String errorMsg = parseDownloadError(stderr, exitCode, remotePath) +
+                                  " (chunk " + (chunkIndex + 1) + ")";
+                Logger.logError(LOG_TAG, "Chunk download failed: " + errorMsg);
+                TransferResult result = TransferResult.failure(errorMsg, exitCode, bytesWritten, fileSize);
+                if (callback != null) callback.onComplete(result);
+                return result;
+            }
+
+            // Decode chunk and write to output stream
+            try {
+                byte[] decodedChunk = Base64.decode(stdout, Base64.NO_WRAP);
+                outputStream.write(decodedChunk);
+                bytesWritten += decodedChunk.length;
+
+                Logger.logDebug(LOG_TAG, "Chunk " + (chunkIndex + 1) + " decoded: " +
+                               decodedChunk.length + " bytes, total written: " + bytesWritten);
+
+                // Report progress
+                if (callback != null) {
+                    callback.onProgress(bytesWritten, fileSize);
+                }
+            } catch (IllegalArgumentException e) {
+                String errorMsg = "Base64 decode failed for chunk " + (chunkIndex + 1) + ": " + e.getMessage();
+                Logger.logError(LOG_TAG, errorMsg);
+                TransferResult result = TransferResult.failure(errorMsg, exitCode, bytesWritten, fileSize);
+                if (callback != null) callback.onComplete(result);
+                return result;
+            } catch (IOException e) {
+                String errorMsg = "Write failed for chunk " + (chunkIndex + 1) + ": " + e.getMessage();
+                Logger.logError(LOG_TAG, errorMsg);
+                TransferResult result = TransferResult.failure(errorMsg, exitCode, bytesWritten, fileSize);
+                if (callback != null) callback.onComplete(result);
+                return result;
+            }
+        }
+
+        // Flush output stream
+        try {
+            outputStream.flush();
+        } catch (IOException e) {
+            Logger.logError(LOG_TAG, "Failed to flush output stream: " + e.getMessage());
+        }
+
+        Logger.logDebug(LOG_TAG, "Chunked download succeeded: " + bytesWritten + " bytes from " + remotePath);
         TransferResult result = TransferResult.success(bytesWritten, fileSize);
         if (callback != null) callback.onComplete(result);
         return result;

@@ -256,6 +256,7 @@
     <string name="title_confirm_delete">Confirm Delete</string>
     <string name="message_confirm_delete_file">Delete file \"%s\"?</string>
     <string name="message_confirm_delete_directory">Delete directory \"%s\" and all contents?</string>
+    <string name="message_confirm_delete_symlink_directory">Delete symbolic link \"%s\"?\n\nOnly the link will be removed. The target directory and its contents will remain unchanged.</string>
     <string name="title_rename_file">Rename File</string>
     <string name="title_rename_directory">Rename Directory</string>
     <string name="title_new_folder">New Folder</string>

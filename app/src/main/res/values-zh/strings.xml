@@ -20,6 +20,7 @@
     <string name="title_confirm_delete">确认删除</string>
     <string name="message_confirm_delete_file">删除文件 "%s"？</string>
     <string name="message_confirm_delete_directory">删除目录 "%s" 及其所有内容？</string>
+    <string name="message_confirm_delete_symlink_directory">删除符号链接 "%s"？\n\n仅删除链接本身。目标目录及其内容将保持不变。</string>
     <string name="title_rename_file">重命名文件</string>
     <string name="title_rename_directory">重命名目录</string>
     <string name="title_new_folder">新建文件夹</string>

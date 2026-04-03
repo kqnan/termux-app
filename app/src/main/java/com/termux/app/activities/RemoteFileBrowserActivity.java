@@ -1114,13 +1114,27 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
     /**
      * Show delete confirmation dialog for a file or directory.
      *
+     * Distinguishes three cases:
+     * - Regular directory: warn about deleting all contents
+     * - Symlink directory: warn only link is deleted, target unaffected
+     * - File or symlink file: simple delete confirmation
+     *
      * @param file File to delete
      */
     private void showDeleteConfirmationDialog(@NonNull RemoteFile file) {
         String title = getString(R.string.title_confirm_delete);
-        String message = file.isDirectory()
-            ? getString(R.string.message_confirm_delete_directory, file.getName())
-            : getString(R.string.message_confirm_delete_file, file.getName());
+        String message;
+
+        if (file.isDirectory()) {
+            // Regular directory - warn about deleting all contents
+            message = getString(R.string.message_confirm_delete_directory, file.getName());
+        } else if (file.isSymlink() && file.isSymlinkTargetDirectory()) {
+            // Symlink to directory - special message: only delete link, target unaffected
+            message = getString(R.string.message_confirm_delete_symlink_directory, file.getName());
+        } else {
+            // Regular file or symlink to file - simple delete confirmation
+            message = getString(R.string.message_confirm_delete_file, file.getName());
+        }
 
         MessageDialogUtils.showMessage(
             this,

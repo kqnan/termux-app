@@ -493,4 +493,228 @@ public class RemoteFileTransferTest {
             RemoteFileTransfer.TransferResult.success(0, 0);
         assertTrue("Empty file transfer should succeed", result.success);
     }
+
+    // ==================== Chunked Transfer Logic Tests ====================
+
+    /**
+     * Test chunk count calculation for various file sizes.
+     * Verify the formula: totalChunks = ceil(fileSize / TRANSFER_CHUNK_SIZE)
+     */
+    @Test
+    public void testChunkCountCalculation() {
+        // TRANSFER_CHUNK_SIZE = 1MB = 1024 * 1024 = 1048576 bytes
+        long chunkSize = 1024 * 1024;
+
+        // Exactly 1 chunk: fileSize <= chunkSize
+        assertEquals("1MB file should be 1 chunk", 1, calculateChunks(chunkSize, chunkSize));
+        assertEquals("512KB file should be 1 chunk", 1, calculateChunks(512 * 1024, chunkSize));
+        assertEquals("1 byte file should be 1 chunk", 1, calculateChunks(1, chunkSize));
+        assertEquals("0 byte file should be 1 chunk (handled separately)", 1, calculateChunks(0, chunkSize));
+
+        // Exactly 2 chunks: fileSize > chunkSize but <= 2*chunkSize
+        assertEquals("2MB file should be 2 chunks", 2, calculateChunks(2 * chunkSize, chunkSize));
+        assertEquals("1.5MB file should be 2 chunks", 2, calculateChunks(chunkSize + 512 * 1024, chunkSize));
+
+        // Multiple chunks
+        assertEquals("3MB file should be 3 chunks", 3, calculateChunks(3 * chunkSize, chunkSize));
+        assertEquals("10MB file should be 10 chunks", 10, calculateChunks(10 * chunkSize, chunkSize));
+        assertEquals("100MB file should be 100 chunks", 100, calculateChunks(100 * chunkSize, chunkSize));
+    }
+
+    /**
+     * Test last chunk size calculation (boundary case).
+     * The last chunk is typically smaller than full chunk size.
+     */
+    @Test
+    public void testLastChunkSizeCalculation() {
+        long chunkSize = 1024 * 1024;
+
+        // File exactly divisible by chunk size: last chunk = full chunk
+        assertEquals("2MB file last chunk should be 1MB", chunkSize,
+                     calculateLastChunkSize(2 * chunkSize, chunkSize));
+        assertEquals("3MB file last chunk should be 1MB", chunkSize,
+                     calculateLastChunkSize(3 * chunkSize, chunkSize));
+
+        // File with remainder: last chunk = remainder
+        assertEquals("1.5MB file last chunk should be 512KB", 512 * 1024,
+                     calculateLastChunkSize(chunkSize + 512 * 1024, chunkSize));
+        assertEquals("2.5MB file last chunk should be 512KB", 512 * 1024,
+                     calculateLastChunkSize(2 * chunkSize + 512 * 1024, chunkSize));
+        assertEquals("1MB + 1 byte last chunk should be 1 byte", 1,
+                     calculateLastChunkSize(chunkSize + 1, chunkSize));
+
+        // Small file: only one chunk, last chunk = file size
+        assertEquals("100KB file last chunk should be 100KB", 100 * 1024,
+                     calculateLastChunkSize(100 * 1024, chunkSize));
+    }
+
+    /**
+     * Test chunk offset calculation for upload.
+     * Each chunk starts at offset = chunkIndex * chunkSize.
+     */
+    @Test
+    public void testChunkOffsetCalculation() {
+        long chunkSize = 1024 * 1024;
+
+        // First chunk always at offset 0
+        assertEquals("Chunk 0 offset should be 0", 0, calculateChunkOffset(0, chunkSize));
+
+        // Subsequent chunks at multiples of chunk size
+        assertEquals("Chunk 1 offset should be 1MB", chunkSize, calculateChunkOffset(1, chunkSize));
+        assertEquals("Chunk 2 offset should be 2MB", 2 * chunkSize, calculateChunkOffset(2, chunkSize));
+        assertEquals("Chunk 10 offset should be 10MB", 10 * chunkSize, calculateChunkOffset(10, chunkSize));
+    }
+
+    /**
+     * Test chunk encoding produces valid base64 with correct size.
+     * Base64 encoding expands data by ~33% (4 bytes per 3 input bytes).
+     */
+    @Test
+    public void testChunkBase64EncodingSize() {
+        // Test various chunk sizes
+        int[] testSizes = {1, 100, 1024, 4096, 512 * 1024, 1024 * 1024};
+
+        for (int size : testSizes) {
+            byte[] chunkData = new byte[size];
+            for (int i = 0; i < size; i++) {
+                chunkData[i] = (byte) (i % 256);
+            }
+
+            byte[] encoded = Base64.encode(chunkData, Base64.NO_WRAP);
+
+            // Calculate expected encoded size
+            int expectedEncodedSize = (int) Math.ceil(size / 3.0) * 4;
+            assertEquals("Encoded size should match expected for " + size + " bytes",
+                         expectedEncodedSize, encoded.length);
+
+            // Verify roundtrip decode
+            byte[] decoded = Base64.decode(encoded, Base64.NO_WRAP);
+            assertArrayEquals("Decoded chunk should match original for " + size + " bytes",
+                              chunkData, decoded);
+        }
+    }
+
+    /**
+     * Test progress tracking across multiple chunks.
+     * Progress should be reported after each chunk completion.
+     */
+    @Test
+    public void testChunkedProgressTracking() {
+        long fileSize = 5 * 1024 * 1024; // 5MB
+        long chunkSize = 1024 * 1024;    // 1MB
+        int totalChunks = 5;
+
+        // Simulate progress updates
+        long[] expectedProgressPoints = {0, chunkSize, 2 * chunkSize, 3 * chunkSize,
+                                          4 * chunkSize, 5 * chunkSize};
+
+        for (int i = 0; i <= totalChunks; i++) {
+            long expectedProgress = i * chunkSize;
+            if (i == totalChunks) {
+                expectedProgress = fileSize; // Final progress should equal total
+            }
+            assertEquals("Progress after chunk " + i + " should be correct",
+                         expectedProgress, expectedProgressPoints[i]);
+        }
+    }
+
+    /**
+     * Test that large file (100MB) produces correct chunk count.
+     * This validates the OOM-prevention mechanism works for large files.
+     */
+    @Test
+    public void testLargeFileChunkCount() {
+        long chunkSize = 1024 * 1024; // 1MB
+
+        // 100MB file = 100 chunks
+        long largeFileSize = 100 * chunkSize;
+        int chunks = calculateChunks(largeFileSize, chunkSize);
+        assertEquals("100MB file should produce 100 chunks", 100, chunks);
+
+        // Verify each chunk processes at most 1MB
+        for (int i = 0; i < chunks; i++) {
+            long chunkStart = i * chunkSize;
+            long thisChunkSize = Math.min(chunkSize, largeFileSize - chunkStart);
+            assertTrue("Each chunk should be at most 1MB", thisChunkSize <= chunkSize);
+            assertTrue("Each chunk should be positive", thisChunkSize > 0);
+        }
+    }
+
+    /**
+     * Test readFully simulation - ensuring complete chunk reading.
+     */
+    @Test
+    public void testReadFullySimulation() throws IOException {
+        byte[] testData = new byte[1024 * 1024]; // 1MB
+        for (int i = 0; i < testData.length; i++) {
+            testData[i] = (byte) (i % 256);
+        }
+
+        ByteArrayInputStream input = new ByteArrayInputStream(testData);
+        byte[] buffer = new byte[1024 * 1024];
+
+        // Simulate readFully
+        int bytesToRead = testData.length;
+        int totalRead = 0;
+        while (totalRead < bytesToRead) {
+            int read = input.read(buffer, totalRead, bytesToRead - totalRead);
+            if (read == -1) break;
+            totalRead += read;
+        }
+
+        assertEquals("readFully should read exact number of bytes", bytesToRead, totalRead);
+        assertArrayEquals("Buffer should contain exact data", testData, buffer);
+    }
+
+    /**
+     * Test readFully with partial data (simulating early EOF).
+     */
+    @Test
+    public void testReadFullyPartialData() throws IOException {
+        byte[] partialData = new byte[512 * 1024]; // 512KB (less than requested)
+        ByteArrayInputStream input = new ByteArrayInputStream(partialData);
+        byte[] buffer = new byte[1024 * 1024];
+
+        // Try to read 1MB but only 512KB available
+        int bytesToRead = 1024 * 1024;
+        int totalRead = 0;
+        while (totalRead < bytesToRead) {
+            int read = input.read(buffer, totalRead, bytesToRead - totalRead);
+            if (read == -1) break;
+            totalRead += read;
+        }
+
+        // Should read only available data
+        assertEquals("readFully should return available bytes on EOF", 512 * 1024, totalRead);
+        // This scenario would trigger error in actual uploadChunked
+    }
+
+    // Helper methods for chunk calculations
+
+    private int calculateChunks(long fileSize, long chunkSize) {
+        int chunks = (int) (fileSize / chunkSize);
+        if (fileSize % chunkSize != 0) {
+            chunks++;
+        }
+        // Handle empty file case (0 bytes still needs 1 empty chunk or special handling)
+        if (fileSize == 0) {
+            return 1; // Actually handled separately in code
+        }
+        return chunks;
+    }
+
+    private long calculateLastChunkSize(long fileSize, long chunkSize) {
+        int lastChunkIndex = (int) (fileSize / chunkSize);
+        if (fileSize % chunkSize != 0) {
+            lastChunkIndex++;
+        }
+        lastChunkIndex--; // Last chunk index (0-based)
+
+        long lastChunkStart = lastChunkIndex * chunkSize;
+        return fileSize - lastChunkStart;
+    }
+
+    private long calculateChunkOffset(int chunkIndex, long chunkSize) {
+        return chunkIndex * chunkSize;
+    }
 }

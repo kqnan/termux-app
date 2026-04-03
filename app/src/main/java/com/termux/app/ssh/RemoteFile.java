@@ -43,6 +43,9 @@ public class RemoteFile {
     /** Symlink target (null if not a symlink) */
     private final String symlinkTarget;
 
+    /** Whether symlink target is a directory (only meaningful for symlinks) */
+    private final boolean symlinkTargetIsDirectory;
+
     /**
      * Create a RemoteFile with all metadata.
      *
@@ -59,6 +62,26 @@ public class RemoteFile {
     public RemoteFile(String name, String path, FileType type, long size,
                       String modifyTime, String permissions, String owner,
                       String group, String symlinkTarget) {
+        this(name, path, type, size, modifyTime, permissions, owner, group, symlinkTarget, false);
+    }
+
+    /**
+     * Create a RemoteFile with all metadata including symlink target type.
+     *
+     * @param name File name
+     * @param path Full path on remote server
+     * @param type File type
+     * @param size File size in bytes
+     * @param modifyTime Modification time string
+     * @param permissions Permission string
+     * @param owner Owner username
+     * @param group Group name
+     * @param symlinkTarget Symlink target (null if not symlink)
+     * @param symlinkTargetIsDirectory Whether symlink target is a directory
+     */
+    public RemoteFile(String name, String path, FileType type, long size,
+                      String modifyTime, String permissions, String owner,
+                      String group, String symlinkTarget, boolean symlinkTargetIsDirectory) {
         this.name = name;
         this.path = path;
         this.type = type;
@@ -68,6 +91,7 @@ public class RemoteFile {
         this.owner = owner;
         this.group = group;
         this.symlinkTarget = symlinkTarget;
+        this.symlinkTargetIsDirectory = symlinkTargetIsDirectory;
     }
 
     /**
@@ -104,6 +128,18 @@ public class RemoteFile {
      */
     public boolean isDirectory() {
         return type == FileType.DIRECTORY;
+    }
+
+    /**
+     * Check if this is a directory or a symlink pointing to a directory.
+     *
+     * Use this method when deciding whether to navigate into an item.
+     *
+     * @return true if directory or symlink-to-directory
+     */
+    public boolean isDirectoryOrSymlinkToDirectory() {
+        return type == FileType.DIRECTORY ||
+               (type == FileType.SYMLINK && symlinkTargetIsDirectory);
     }
 
     /**
@@ -197,6 +233,18 @@ public class RemoteFile {
      */
     public String getSymlinkTarget() {
         return symlinkTarget;
+    }
+
+    /**
+     * Check if symlink target is a directory.
+     *
+     * Only meaningful for symlinks. Returns true if this symlink points
+     * to a directory, false otherwise.
+     *
+     * @return true if symlink target is a directory
+     */
+    public boolean isSymlinkTargetDirectory() {
+        return symlinkTargetIsDirectory;
     }
 
     /**

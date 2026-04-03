@@ -87,8 +87,8 @@ public class RemoteFileListAdapter extends ArrayAdapter<RemoteFile> {
             holder.nameView.setTextColor(ContextCompat.getColor(mContext, R.color.morandi_file_name));
         }
 
-        // Set file size (show "-" for directories)
-        if (file.isDirectory()) {
+        // Set file size (show "-" for directories and symlinks to directories)
+        if (file.isDirectoryOrSymlinkToDirectory()) {
             holder.sizeView.setText(mContext.getString(R.string.directory_size));
         } else {
             holder.sizeView.setText(file.getSizeFormatted());

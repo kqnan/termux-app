@@ -906,16 +906,18 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
     /**
      * Handle file item click.
      *
-     * If clicked item is a directory, navigate into it.
+     * If clicked item is a directory or symlink to a directory, navigate into it.
      * If it's a file or symlink, show info (future: download/open).
      *
      * @param file Clicked RemoteFile item
      */
     private void onFileItemClick(@NonNull RemoteFile file) {
-        Logger.logDebug(LOG_TAG, "File clicked: " + file.getName() + " (type: " + file.getType() + ")");
+        Logger.logDebug(LOG_TAG, "File clicked: " + file.getName() + " (type: " + file.getType() +
+                       ", isDirectory: " + file.isDirectory() +
+                       ", symlinkTargetIsDirectory: " + file.isSymlinkTargetDirectory() + ")");
 
-        if (file.isDirectory()) {
-            // Navigate into subdirectory
+        if (file.isDirectoryOrSymlinkToDirectory()) {
+            // Navigate into subdirectory (including symlink-to-directory)
             String newPath = file.getPath();
             mPathStack.push(mCurrentPath);
             loadDirectory(newPath);
@@ -1069,10 +1071,10 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
         // Inflate the context menu
         getMenuInflater().inflate(R.menu.context_menu_remote_file, menu);
 
-        // Hide download menu for directories (only files can be downloaded)
+        // Hide download menu for directories and symlinks to directories (only files can be downloaded)
         MenuItem downloadItem = menu.findItem(R.id.menu_download);
         if (downloadItem != null) {
-            downloadItem.setVisible(!mSelectedFile.isDirectory());
+            downloadItem.setVisible(!mSelectedFile.isDirectoryOrSymlinkToDirectory());
         }
 
         Logger.logDebug(LOG_TAG, "Context menu created for: " + mSelectedFile.getName());

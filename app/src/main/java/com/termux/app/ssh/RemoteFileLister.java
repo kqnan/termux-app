@@ -49,6 +49,11 @@ public class RemoteFileLister {
     /** Pattern for splitting symlink name and target */
     private static final Pattern SYMLINK_PATTERN = Pattern.compile("^(.+?)\\s+->\\s+(.+)$");
 
+    /** Pattern for parsing ls -laL output with symlink target type indicator */
+    private static final Pattern LS_SYMLINK_TYPE_PATTERN = Pattern.compile(
+        "^(.+?)\\s+->\\s+(.+?)/$"  // trailing / indicates directory target
+    );
+
     /**
      * List files in a remote directory via SSH ControlMaster.
      *
@@ -134,6 +139,7 @@ public class RemoteFileLister {
      * Build SSH command arguments for listing directory.
      *
      * Uses control socket for connection multiplexing.
+     * Uses -F flag to append type indicators (/ for directories, @ for symlinks).
      *
      * @param connection SSH connection info
      * @param remotePath Path to list on remote server
@@ -142,9 +148,10 @@ public class RemoteFileLister {
     @NonNull
     private static String[] buildSSHCommand(@NonNull SSHConnectionInfo connection,
                                              @NonNull String remotePath) {
-        // SSH command: ssh -S socketPath user@host "ls -la 'path'"
+        // SSH command: ssh -S socketPath user@host "ls -laF 'path'"
         // Use -S to specify control socket
         // Use -o BatchMode=yes to prevent password prompts (should use existing connection)
+        // Use -F to append type indicators (/ for dir, @ for symlink, * for executable)
         // Quote remote path for shell safety
         String escapedPath = escapePathForSSH(remotePath);
 
@@ -153,7 +160,7 @@ public class RemoteFileLister {
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=10",
             connection.getUser() + "@" + connection.getHost(),
-            "ls -la " + escapedPath
+            "ls -laF " + escapedPath
         };
     }
 
@@ -246,9 +253,17 @@ public class RemoteFileLister {
     }
 
     /**
-     * Parse a single ls -la output line into RemoteFile.
+     * Parse a single ls -laF output line into RemoteFile.
      *
-     * @param line Raw ls -la line
+     * ls -laF appends type indicators:
+     * - / for directories
+     * - @ for symbolic links
+     * - * for executables
+     *
+     * For symlinks, we also check if the target ends with / to determine
+     * if the symlink points to a directory.
+     *
+     * @param line Raw ls -laF line
      * @param basePath Directory path that was listed
      * @return RemoteFile object, or null if parsing failed
      */
@@ -274,14 +289,41 @@ public class RemoteFileLister {
             char typeChar = permissions.charAt(0);
             RemoteFile.FileType type = RemoteFile.getTypeFromPermissionChar(typeChar);
 
-            // Handle symlinks: parse "name -> target"
+            // Handle type indicators from ls -laF
+            // - Directories have trailing /
+            // - Symlinks have trailing @
+            // - Executables have trailing *
             String name = nameField;
             String symlinkTarget = null;
+            boolean symlinkTargetIsDirectory = false;
+
+            // Check for symlink type indicator (@)
+            if (name.endsWith("@")) {
+                name = name.substring(0, name.length() - 1);
+            }
+
+            // Handle symlinks: parse "name -> target"
             if (type == RemoteFile.FileType.SYMLINK) {
-                Matcher symlinkMatcher = SYMLINK_PATTERN.matcher(nameField);
+                Matcher symlinkMatcher = SYMLINK_PATTERN.matcher(name);
                 if (symlinkMatcher.matches()) {
                     name = symlinkMatcher.group(1);
                     symlinkTarget = symlinkMatcher.group(2);
+
+                    // Remove @ from name if present (ls -laF adds it)
+                    if (name.endsWith("@")) {
+                        name = name.substring(0, name.length() - 1);
+                    }
+
+                    // Check if symlink target ends with / (indicates directory)
+                    if (symlinkTarget.endsWith("/")) {
+                        symlinkTarget = symlinkTarget.substring(0, symlinkTarget.length() - 1);
+                        symlinkTargetIsDirectory = true;
+                    }
+                }
+            } else if (type == RemoteFile.FileType.DIRECTORY) {
+                // Remove trailing / from directory names (ls -laF adds it)
+                if (name.endsWith("/")) {
+                    name = name.substring(0, name.length() - 1);
                 }
             }
 
@@ -300,7 +342,8 @@ public class RemoteFileLister {
                 permissions.substring(1), // Remove type char, keep rwx string
                 owner,
                 group,
-                symlinkTarget
+                symlinkTarget,
+                symlinkTargetIsDirectory
             );
 
         } catch (Exception e) {

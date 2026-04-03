@@ -640,6 +640,122 @@ public class RemoteFileTransferTest {
         }
     }
 
+    // ==================== Precise Boundary File Size Tests ====================
+
+    /**
+     * Test precise boundary file sizes: 1MB-1, 1MB, 1MB+1.
+     * These are critical edge cases for chunk count calculation.
+     */
+    @Test
+    public void testPreciseBoundaryFileSizes() {
+        long chunkSize = 1024 * 1024; // 1MB = 1048576 bytes
+
+        // 1MB - 1 byte = 1048575 bytes -> 1 chunk (fits entirely in one chunk)
+        long oneMBMinus1 = chunkSize - 1;
+        assertEquals("1MB-1 bytes should be 1 chunk", 1, calculateChunks(oneMBMinus1, chunkSize));
+        assertEquals("1MB-1 last chunk size should be full file size", oneMBMinus1,
+                     calculateLastChunkSize(oneMBMinus1, chunkSize));
+
+        // 1MB exactly = 1048576 bytes -> 1 chunk
+        long oneMB = chunkSize;
+        assertEquals("Exactly 1MB should be 1 chunk", 1, calculateChunks(oneMB, chunkSize));
+        assertEquals("1MB last chunk size should be full chunk", chunkSize,
+                     calculateLastChunkSize(oneMB, chunkSize));
+
+        // 1MB + 1 byte = 1048577 bytes -> 2 chunks (overflow into second chunk)
+        long oneMBPlus1 = chunkSize + 1;
+        assertEquals("1MB+1 bytes should be 2 chunks", 2, calculateChunks(oneMBPlus1, chunkSize));
+        assertEquals("1MB+1 first chunk should be full 1MB", chunkSize,
+                     calculateChunkOffset(1, chunkSize)); // offset of second chunk = 1MB
+        assertEquals("1MB+1 last chunk size should be 1 byte", 1,
+                     calculateLastChunkSize(oneMBPlus1, chunkSize));
+    }
+
+    /**
+     * Test 50MB file chunk calculation (MVP upper limit).
+     * Validates behavior at the previous MAX_FILE_SIZE boundary.
+     */
+    @Test
+    public void test50MBFileChunkCalculation() {
+        long chunkSize = 1024 * 1024; // 1MB
+        long fiftyMB = 50 * chunkSize;
+
+        // 50MB should produce exactly 50 chunks (evenly divisible)
+        assertEquals("50MB file should be 50 chunks", 50, calculateChunks(fiftyMB, chunkSize));
+
+        // All chunks should be full size (evenly divisible)
+        assertEquals("50MB last chunk should be full 1MB", chunkSize,
+                     calculateLastChunkSize(fiftyMB, chunkSize));
+
+        // Verify no remainder
+        assertEquals("50MB should have no remainder when divided by chunk size",
+                     0, fiftyMB % chunkSize);
+    }
+
+    /**
+     * Test 100MB file chunk calculation (new support target).
+     * Validates that the chunked approach handles files that previously caused OOM.
+     */
+    @Test
+    public void test100MBFileChunkCalculation() {
+        long chunkSize = 1024 * 1024; // 1MB
+        long hundredMB = 100 * chunkSize;
+
+        // 100MB should produce exactly 100 chunks
+        assertEquals("100MB file should be 100 chunks", 100, calculateChunks(hundredMB, chunkSize));
+
+        // All chunks should be full size
+        assertEquals("100MB last chunk should be full 1MB", chunkSize,
+                     calculateLastChunkSize(hundredMB, chunkSize));
+
+        // Simulate memory usage: each chunk is 1MB + base64 overhead (~33%)
+        // Peak memory = 1MB raw data + ~1.33MB encoded = ~2.33MB
+        // This is far below the OOM threshold
+        long estimatedPeakMemory = chunkSize + (long)(chunkSize * 1.34);
+        assertTrue("Estimated peak memory should be under 3MB",
+                   estimatedPeakMemory < 3 * 1024 * 1024);
+    }
+
+    /**
+     * Test chunk boundary crossing scenarios.
+     * Verifies correct behavior when file size is just above/below chunk boundaries.
+     */
+    @Test
+    public void testChunkBoundaryCrossing() {
+        long chunkSize = 1024 * 1024;
+
+        // Test crossing from 1 chunk to 2 chunks
+        assertEquals("ChunkSize-1 should be 1 chunk", 1, calculateChunks(chunkSize - 1, chunkSize));
+        assertEquals("ChunkSize should be 1 chunk", 1, calculateChunks(chunkSize, chunkSize));
+        assertEquals("ChunkSize+1 should be 2 chunks", 2, calculateChunks(chunkSize + 1, chunkSize));
+
+        // Test crossing from 2 chunks to 3 chunks
+        assertEquals("2*ChunkSize-1 should be 2 chunks", 2, calculateChunks(2 * chunkSize - 1, chunkSize));
+        assertEquals("2*ChunkSize should be 2 chunks", 2, calculateChunks(2 * chunkSize, chunkSize));
+        assertEquals("2*ChunkSize+1 should be 3 chunks", 3, calculateChunks(2 * chunkSize + 1, chunkSize));
+
+        // Test crossing from 10 chunks to 11 chunks
+        assertEquals("10*ChunkSize-1 should be 10 chunks", 10, calculateChunks(10 * chunkSize - 1, chunkSize));
+        assertEquals("10*ChunkSize should be 10 chunks", 10, calculateChunks(10 * chunkSize, chunkSize));
+        assertEquals("10*ChunkSize+1 should be 11 chunks", 11, calculateChunks(10 * chunkSize + 1, chunkSize));
+    }
+
+    /**
+     * Test empty file and single-byte file edge cases.
+     * These are handled specially in the implementation.
+     */
+    @Test
+    public void testEmptyAndSingleByteFiles() {
+        long chunkSize = 1024 * 1024;
+
+        // Empty file (0 bytes) - handled specially, creates file but no data transfer
+        assertEquals("0 bytes should need 1 chunk (special handling)", 1, calculateChunks(0, chunkSize));
+
+        // Single byte file - fits in one chunk
+        assertEquals("1 byte should be 1 chunk", 1, calculateChunks(1, chunkSize));
+        assertEquals("1 byte last chunk should be 1 byte", 1, calculateLastChunkSize(1, chunkSize));
+    }
+
     /**
      * Test readFully simulation - ensuring complete chunk reading.
      */

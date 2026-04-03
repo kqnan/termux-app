@@ -1,8 +1,9 @@
 package com.termux.app.ssh;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.system.Os;
-import android.os.FileObserver;
 
 import com.termux.shared.errors.Error;
 import com.termux.shared.file.FileUtils;
@@ -29,11 +30,17 @@ public class SSHControlMasterInstaller {
 
     private static final String LOG_TAG = "SSHControlMasterInstaller";
 
-    /** Static FileObserver to monitor ssh binary creation - prevents GC collection */
-    private static FileObserver sSSHBinaryObserver = null;
+    /** Handler for polling mechanism */
+    private static Handler sPollingHandler = null;
 
-    /** Context reference for observer callbacks - set when starting watch */
+    /** Runnable for polling check */
+    private static Runnable sPollingRunnable = null;
+
+    /** Context reference for polling callbacks - set when starting watch */
     private static Context sApplicationContext = null;
+
+    /** Polling interval in milliseconds */
+    private static final long POLLING_INTERVAL_MS = 2000; // 2 seconds
 
     /** SSH binary path in Termux prefix */
     private static final String SSH_BINARY_PATH = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh";
@@ -454,14 +461,14 @@ public class SSHControlMasterInstaller {
 
         try {
             // Os.stat() returns struct stat with st_mode field
-            // S_IFSOCK = 0xC000 (49152 in decimal) - socket file type mask
+            // S_IFSOCK = 0xC000 (49192 in decimal) - socket file type mask
             // Use OsConstants.S_IFSOCK when available
             android.system.StructStat stat = Os.stat(file.getAbsolutePath());
             int mode = stat.st_mode;
 
             // Check if file type is socket: (mode & S_IFMT) == S_IFSOCK
             // S_IFMT = 0xF000 (61440) - file type mask
-            // S_IFSOCK = 0xC000 (49152) - socket type
+            // S_IFSOCK = 0xC000 (49192) - socket type
             int fileType = mode & 0170000; // S_IFMT in octal
             int socketType = 0140000;     // S_IFSOCK in octal
 
@@ -473,14 +480,13 @@ public class SSHControlMasterInstaller {
     }
 
     /**
-     * Start event-driven monitoring for SSH binary creation.
-     * If ssh binary already exists, install immediately and skip monitoring.
-     * Otherwise, set up FileObserver to watch for ssh binary creation.
+     * Start polling-based monitoring for SSH binary creation.
+     * If ssh binary already exists, install immediately and skip polling.
+     * Otherwise, start periodic polling every 2 seconds to check for ssh binary.
      *
-     * This replaces the startup-time install() call with lazy installation
-     * triggered by openssh package installation.
+     * This replaces the unreliable FileObserver with a robust polling mechanism.
      *
-     * @param context Application context (used for install() call when triggered)
+     * @param context Application context (used for install() call when ssh is detected)
      */
     public static void startWatchingSSHBinary(Context context) {
         if (context == null) {
@@ -490,7 +496,7 @@ public class SSHControlMasterInstaller {
 
         sApplicationContext = context.getApplicationContext();
 
-        // Check if ssh already exists - install immediately and skip monitoring
+        // Check if ssh already exists - install immediately and skip polling
         File sshBinary = new File(SSH_BINARY_PATH);
         if (sshBinary.exists()) {
             Logger.logInfo(LOG_TAG, "SSH binary already exists, installing wrapper immediately");
@@ -498,62 +504,69 @@ public class SSHControlMasterInstaller {
             return;
         }
 
-        // Stop any existing observer before creating new one
+        // Stop any existing polling before starting new one
         stopWatchingSSHBinary();
 
-        Logger.logInfo(LOG_TAG, "Starting FileObserver for SSH binary creation at " + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
+        Logger.logInfo(LOG_TAG, "Starting polling for SSH binary creation at " + SSH_BINARY_PATH + 
+            " (interval: " + POLLING_INTERVAL_MS + "ms)");
 
-        // Create FileObserver to monitor bin directory for ssh creation
-        sSSHBinaryObserver = new FileObserver(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH,
-                FileObserver.CREATE | FileObserver.MOVED_TO) {
+        // Create Handler on main looper
+        sPollingHandler = new Handler(Looper.getMainLooper());
+
+        // Create polling Runnable
+        sPollingRunnable = new Runnable() {
             @Override
-            public void onEvent(int event, String path) {
-                if (path == null) {
-                    return;
-                }
-
-                // Check if the created file is ssh binary (could be "ssh" or symlink)
-                if ("ssh".equals(path)) {
-                    Logger.logInfo(LOG_TAG, "Detected ssh binary creation, triggering wrapper installation");
+            public void run() {
+                File ssh = new File(SSH_BINARY_PATH);
+                
+                if (ssh.exists()) {
+                    Logger.logInfo(LOG_TAG, "Detected ssh binary creation via polling, triggering wrapper installation");
                     
-                    // Stop watching before install to avoid recursion
+                    // Stop polling before install to avoid recursion
                     stopWatchingSSHBinary();
                     
                     // Install wrapper
                     if (sApplicationContext != null) {
                         boolean success = install(sApplicationContext);
                         if (success) {
-                            Logger.logInfo(LOG_TAG, "SSH ControlMaster wrapper installed successfully after ssh binary creation");
+                            Logger.logInfo(LOG_TAG, "SSH ControlMaster wrapper installed successfully after ssh binary detection");
                         } else {
-                            Logger.logError(LOG_TAG, "SSH ControlMaster wrapper installation failed after ssh binary creation");
+                            Logger.logError(LOG_TAG, "SSH ControlMaster wrapper installation failed after ssh binary detection");
                         }
+                    }
+                } else {
+                    // ssh not found yet, schedule next poll
+                    if (sPollingHandler != null && sPollingRunnable != null) {
+                        sPollingHandler.postDelayed(sPollingRunnable, POLLING_INTERVAL_MS);
                     }
                 }
             }
         };
 
-        sSSHBinaryObserver.startWatching();
-        Logger.logInfo(LOG_TAG, "FileObserver started, waiting for ssh binary creation");
+        // Start polling immediately
+        sPollingHandler.post(sPollingRunnable);
+        Logger.logInfo(LOG_TAG, "Polling started, checking for ssh binary every " + POLLING_INTERVAL_MS + "ms");
     }
 
     /**
-     * Stop watching for SSH binary creation and release observer resources.
-     * Safe to call multiple times - checks if observer is active before stopping.
+     * Stop polling for SSH binary creation and release resources.
+     * Safe to call multiple times - checks if polling is active before stopping.
      */
     public static void stopWatchingSSHBinary() {
-        if (sSSHBinaryObserver != null) {
-            Logger.logInfo(LOG_TAG, "Stopping SSH binary FileObserver");
-            sSSHBinaryObserver.stopWatching();
-            sSSHBinaryObserver = null;
+        if (sPollingHandler != null && sPollingRunnable != null) {
+            Logger.logInfo(LOG_TAG, "Stopping SSH binary polling");
+            sPollingHandler.removeCallbacks(sPollingRunnable);
         }
+        sPollingHandler = null;
+        sPollingRunnable = null;
     }
 
     /**
-     * Check if FileObserver is actively watching for SSH binary creation.
+     * Check if polling is actively watching for SSH binary creation.
      *
-     * @return true if observer is active, false otherwise
+     * @return true if polling is active, false otherwise
      */
     public static boolean isWatchingSSHBinary() {
-        return sSSHBinaryObserver != null;
+        return sPollingHandler != null && sPollingRunnable != null;
     }
 }

@@ -498,8 +498,8 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
                     return;
                 }
 
-                // Execute upload with progress callback
-                RemoteFileTransfer.TransferResult result = RemoteFileTransfer.upload(
+                // Execute upload with progress callback (using chunked streaming for large files)
+                RemoteFileTransfer.TransferResult result = RemoteFileTransfer.uploadChunked(
                     this,
                     mConnectionInfo,
                     inputStream,
@@ -616,8 +616,8 @@ public class RemoteFileBrowserActivity extends AppCompatActivity {
                     return;
                 }
 
-                // Execute download with progress callback
-                RemoteFileTransfer.TransferResult result = RemoteFileTransfer.download(
+                // Execute download with progress callback (using chunked streaming for large files)
+                RemoteFileTransfer.TransferResult result = RemoteFileTransfer.downloadChunked(
                     this,
                     mConnectionInfo,
                     mSelectedFile.getPath(),

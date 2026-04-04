@@ -141,6 +141,11 @@ public class RemoteFileLister {
      * Uses control socket for connection multiplexing.
      * Uses -F flag to append type indicators (/ for directories, @ for symlinks).
      *
+     * IMPORTANT: For symlink-to-directory paths, we must append a trailing slash
+     * to ensure ls lists the directory contents, not the symlink itself.
+     * Without trailing slash: "ls -laF /path/to/symlink" returns symlink info
+     * With trailing slash: "ls -laF /path/to/symlink/" lists directory contents
+     *
      * @param connection SSH connection info
      * @param remotePath Path to list on remote server
      * @return Command arguments array
@@ -148,12 +153,20 @@ public class RemoteFileLister {
     @NonNull
     private static String[] buildSSHCommand(@NonNull SSHConnectionInfo connection,
                                              @NonNull String remotePath) {
-        // SSH command: ssh -S socketPath user@host "ls -laF 'path'"
+        // SSH command: ssh -S socketPath user@host "ls -laF 'path/'"
         // Use -S to specify control socket
         // Use -o BatchMode=yes to prevent password prompts (should use existing connection)
         // Use -F to append type indicators (/ for dir, @ for symlink, * for executable)
         // Quote remote path for shell safety
-        String escapedPath = escapePathForSSH(remotePath);
+
+        // Ensure path ends with / to follow symlinks to directories
+        // This is critical: "ls -laF symlink" returns symlink info,
+        // but "ls -laF symlink/" lists the target directory contents
+        String pathWithSlash = remotePath;
+        if (!remotePath.equals("/") && !remotePath.endsWith("/")) {
+            pathWithSlash = remotePath + "/";
+        }
+        String escapedPath = escapePathForSSH(pathWithSlash);
 
         return new String[]{
             "-S", connection.getSocketPath(),
@@ -318,6 +331,41 @@ public class RemoteFileLister {
                     if (symlinkTarget.endsWith("/")) {
                         symlinkTarget = symlinkTarget.substring(0, symlinkTarget.length() - 1);
                         symlinkTargetIsDirectory = true;
+                    }
+                } else {
+                    // Handle abnormal symlink output: if name contains no " -> " but appears
+                    // to be an absolute path, it may be the target path displayed directly.
+                    // This can happen with certain ls implementations or corrupted output.
+                    // Extract the last path segment as the actual link name.
+                    if (name.startsWith("/")) {
+                        // This looks like an absolute path, not a link name
+                        // Use it as the symlink target and extract name from it
+                        symlinkTarget = name;
+                        // Check if target ends with / (directory indicator)
+                        if (symlinkTarget.endsWith("/")) {
+                            symlinkTarget = symlinkTarget.substring(0, symlinkTarget.length() - 1);
+                            symlinkTargetIsDirectory = true;
+                        }
+                        // Extract the last segment as the link name
+                        // First, remove trailing / for extraction
+                        String pathForExtraction = name;
+                        if (pathForExtraction.endsWith("/")) {
+                            pathForExtraction = pathForExtraction.substring(0, pathForExtraction.length() - 1);
+                        }
+                        int lastSlash = pathForExtraction.lastIndexOf('/');
+                        if (lastSlash >= 0 && lastSlash < pathForExtraction.length() - 1) {
+                            name = pathForExtraction.substring(lastSlash + 1);
+                            // Remove any trailing @ or / from extracted name
+                            if (name.endsWith("@") || name.endsWith("/")) {
+                                name = name.substring(0, name.length() - 1);
+                            }
+                        }
+                        Logger.logDebug(LOG_TAG, "Parsed abnormal symlink: name=" + name +
+                            ", target=" + symlinkTarget + ", from field: " + nameField);
+                    }
+                    // If name still has @ suffix after all processing, remove it
+                    if (name.endsWith("@")) {
+                        name = name.substring(0, name.length() - 1);
                     }
                 }
             } else if (type == RemoteFile.FileType.DIRECTORY) {

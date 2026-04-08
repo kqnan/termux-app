@@ -44,9 +44,16 @@ Thumbs.db
 .claude/
 .trae/
 .bg-shell/
+fastlane/
+e2e-evidence/
+.mcp.json
 skills-lock.json
 vision.md
 github_key
+SECURITY.md
+问题收集.md
+clear_and_stream.sh
+screenshot_folder.png
 *~
 .vscode/
 *.code-workspace
